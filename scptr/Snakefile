@@ -1,0 +1,32 @@
+CHROMS = [f"chr{i}" for i in range(1, 20)] + ["chrX"]
+TOLERANCES = list(range(6))
+RESOLUTIONS = ["1000kb", "500kb"]
+PER_STAGE = 5
+K = 5
+RANDOM_STATE = 100
+
+
+rule all:
+    input:
+        expand("results/scptr_runs/{resolution}/{chrom}/tol_{tol}.json", resolution=RESOLUTIONS, chrom=CHROMS, tol=TOLERANCES),
+        expand("results/scptr_runs/{resolution}/{chrom}/tol_{tol}.png", resolution=RESOLUTIONS, chrom=CHROMS, tol=TOLERANCES)
+
+
+rule run_scptr_em:
+    output:
+        png="results/scptr_runs/{resolution}/{chrom}/tol_{tol}.png",
+        json="results/scptr_runs/{resolution}/{chrom}/tol_{tol}.json"
+    params:
+        per_stage=PER_STAGE,
+        k=K,
+        random_state=RANDOM_STATE
+    shell:
+        "python em_cluster_scptr_tads.py "
+        "--chromosome {wildcards.chrom} "
+        "--resolution {wildcards.resolution} "
+        "--tolerance {wildcards.tol} "
+        "--per-stage {params.per_stage} "
+        "--k {params.k} "
+        "--random-state {params.random_state} "
+        "--json-out {output.json} "
+        "--output {output.png}"

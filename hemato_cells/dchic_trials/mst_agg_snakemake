@@ -1,0 +1,196 @@
+# Snakefile for dcHiC-style compartment aggregate MSTs
+#
+# Run from hemato_cells/dchic_trials, for example:
+#   conda activate snakemake-tutorial
+#   snakemake -s mst_agg_snakemake --cores 1
+
+import csv
+import os
+
+
+RESOLUTIONS = ["100kb", "250kb", "500kb", "1mb", "2mb"]
+CHROMS = [f"chr{i}" for i in range(1, 20)]
+
+# Distances produced by dchic_compartment_distance.py.
+DISTANCE_COLUMNS = [
+    "mean_abs_compartment_diff",
+    "rms_compartment_diff",
+    "compartment_switch_count",
+    "mean_aggregate_bin_score",
+    "mean_dchic_sample_maha",
+]
+
+AGGREGATIONS = ["mean", "sum"]
+DCHIC_SCRIPT = config.get("dchic_script", "../../dcHiC/dchicf.r")
+DCHIC_CONDA_ENV = config.get("dchic_conda_env", "dchic-lite")
+GENOME = config.get("genome", "mm10")
+GFOLDER = config.get("gfolder", "")
+
+
+PAIRWISE_CSVS = expand(
+    "dchic_distances/pairwise_dchic_distances_{chrom}_{res}.csv",
+    chrom=CHROMS,
+    res=RESOLUTIONS,
+)
+
+MST_IMAGES = expand(
+    "msts/genomewide/{res}/{dist_col}/{agg}/mstree.png",
+    res=RESOLUTIONS,
+    dist_col=DISTANCE_COLUMNS,
+    agg=AGGREGATIONS,
+)
+
+MST_EDGES = expand(
+    "msts/genomewide/{res}/{dist_col}/{agg}/mst_edges.csv",
+    res=RESOLUTIONS,
+    dist_col=DISTANCE_COLUMNS,
+    agg=AGGREGATIONS,
+)
+
+AGG_DISTANCES = expand(
+    "msts/genomewide/{res}/{dist_col}/{agg}/aggregated_pairwise_distances.csv",
+    res=RESOLUTIONS,
+    dist_col=DISTANCE_COLUMNS,
+    agg=AGGREGATIONS,
+)
+
+CHROMS_USED = expand(
+    "msts/genomewide/{res}/{dist_col}/{agg}/chromosomes_used.txt",
+    res=RESOLUTIONS,
+    dist_col=DISTANCE_COLUMNS,
+    agg=AGGREGATIONS,
+)
+
+TREE_DISTS = expand(
+    "msts/genomewide/{res}/{dist_col}/{agg}/tree_distance.csv",
+    res=RESOLUTIONS,
+    dist_col=DISTANCE_COLUMNS,
+    agg=AGGREGATIONS,
+)
+
+
+rule all:
+    input:
+        PAIRWISE_CSVS,
+        MST_IMAGES,
+        MST_EDGES,
+        AGG_DISTANCES,
+        CHROMS_USED,
+        TREE_DISTS,
+        "msts/dchic_mst_edge_summary.csv",
+        "msts/dchic_tree_distance_summary.csv",
+
+
+rule pairwise_dchic_distances:
+    output:
+        "dchic_distances/pairwise_dchic_distances_{chrom}_{res}.csv"
+    params:
+        chrom="{chrom}",
+        res="{res}",
+        per_bin_dir="dchic_distances/per_bin/{chrom}_{res}",
+        dchic_script=DCHIC_SCRIPT,
+        conda_env=DCHIC_CONDA_ENV,
+        genome=GENOME,
+        gfolder_arg=lambda wildcards: f"--gfolder {GFOLDER}" if GFOLDER else "",
+    shell:
+        """
+        python dchic_compartment_distance.py \
+            --chrom {params.chrom} \
+            --resolution {params.res} \
+            --output {output} \
+            --per-bin-dir {params.per_bin_dir} \
+            --dchic-script {params.dchic_script} \
+            --conda-env {params.conda_env} \
+            --genome {params.genome} \
+            {params.gfolder_arg}
+        """
+
+
+rule aggregate_dchic_mst:
+    input:
+        pairwise=lambda wildcards: expand(
+            "dchic_distances/pairwise_dchic_distances_{chrom}_{res}.csv",
+            chrom=CHROMS,
+            res=[wildcards.res],
+        )
+    output:
+        mst_img="msts/genomewide/{res}/{dist_col}/{agg}/mstree.png",
+        mst_edges="msts/genomewide/{res}/{dist_col}/{agg}/mst_edges.csv",
+        agg_distances="msts/genomewide/{res}/{dist_col}/{agg}/aggregated_pairwise_distances.csv",
+        chroms_used="msts/genomewide/{res}/{dist_col}/{agg}/chromosomes_used.txt",
+        tree_dist="msts/genomewide/{res}/{dist_col}/{agg}/tree_distance.csv",
+    params:
+        res="{res}",
+        dist_col="{dist_col}",
+        agg="{agg}",
+    shell:
+        """
+        python check_agg_mst_dchic.py \
+            --resolution {params.res} \
+            --distance-column {params.dist_col} \
+            --agg {params.agg}
+        """
+
+
+rule summarize_mst_edges:
+    input:
+        MST_EDGES
+    output:
+        "msts/dchic_mst_edge_summary.csv"
+    run:
+        rows = []
+        for path in input:
+            parts = path.split(os.sep)
+            # msts/genomewide/{res}/{dist_col}/{agg}/mst_edges.csv
+            res = parts[2]
+            dist_col = parts[3]
+            agg = parts[4]
+            with open(path, newline="") as handle:
+                reader = csv.DictReader(handle)
+                for row in reader:
+                    rows.append({
+                        "resolution": res,
+                        "distance_column": dist_col,
+                        "aggregation": agg,
+                        "cell1": row["cell1"],
+                        "cell2": row["cell2"],
+                        "weight": row["weight"],
+                    })
+
+        os.makedirs(os.path.dirname(output[0]), exist_ok=True)
+        with open(output[0], "w", newline="") as handle:
+            writer = csv.DictWriter(
+                handle,
+                fieldnames=["resolution", "distance_column", "aggregation", "cell1", "cell2", "weight"],
+            )
+            writer.writeheader()
+            writer.writerows(rows)
+
+
+rule summarize_tree_distances:
+    input:
+        TREE_DISTS
+    output:
+        "msts/dchic_tree_distance_summary.csv"
+    run:
+        rows = []
+        for path in input:
+            with open(path, newline="") as handle:
+                rows.extend(csv.DictReader(handle))
+
+        os.makedirs(os.path.dirname(output[0]), exist_ok=True)
+        with open(output[0], "w", newline="") as handle:
+            writer = csv.DictWriter(
+                handle,
+                fieldnames=[
+                    "resolution",
+                    "distance_column",
+                    "aggregation",
+                    "chrom_scope",
+                    "tree_edit_distance",
+                    "mst_built_from",
+                    "reference_used_for_inference",
+                ],
+            )
+            writer.writeheader()
+            writer.writerows(rows)

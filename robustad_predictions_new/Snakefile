@@ -1,0 +1,107 @@
+from pathlib import Path
+
+from snakemake.exceptions import WorkflowError
+
+
+WORKFLOW_DIR = Path(workflow.basedir).resolve()
+PROJECT_ROOT = WORKFLOW_DIR.parent
+
+SAMPLES = ["LT", "MPP", "CMP", "CLP", "MEP", "GMP", "MKP", "MK", "G"]
+CHROMS = [f"chr{i}" for i in range(1, 20)]
+
+RESOLUTION = 500000
+RESOLUTION_LABEL = "500kb"
+
+MCOOL_DIR = PROJECT_ROOT / "refhic_predictions" / "converted_mcool"
+OUTPUT_ROOT = WORKFLOW_DIR / "robustad_tads"
+PANEL = WORKFLOW_DIR / "reference_panel" / "500kb" / "robustad_mouse_hemato_panel_500kb"
+ROBUSTAD_ROOT = PROJECT_ROOT / "RobusTAD"
+PYTHON = PROJECT_ROOT / "miniforge3" / "envs" / "refhic" / "bin" / "python"
+if not PYTHON.exists():
+    PYTHON = Path("/Users/PSLabMonisha/miniforge3/envs/refhic/bin/python")
+
+MINW_KB = 500
+MAXW_KB = 6000
+MIND_KB = 500
+RATIO = 1.2
+ALPHA = 0.05
+MINTAD_BP = 3_000_000
+MAXTAD_BP = 85_000_000
+DELTA = 0.1
+
+
+rule all:
+    input:
+        WORKFLOW_DIR / "preflight.ok",
+        expand(
+            str(OUTPUT_ROOT / "{sample}" / "{chrom}" / RESOLUTION_LABEL / "boundary.bed"),
+            sample=SAMPLES,
+            chrom=CHROMS,
+        ),
+        expand(
+            str(OUTPUT_ROOT / "{sample}" / "{chrom}" / RESOLUTION_LABEL / "tads_hq.bed"),
+            sample=SAMPLES,
+            chrom=CHROMS,
+        ),
+        expand(
+            str(OUTPUT_ROOT / "{sample}" / "{chrom}" / RESOLUTION_LABEL / "tads_all.bed"),
+            sample=SAMPLES,
+            chrom=CHROMS,
+        ),
+
+
+rule preflight:
+    output:
+        touch(WORKFLOW_DIR / "preflight.ok")
+    run:
+        missing = [
+            str(MCOOL_DIR / f"GSE152918_{sample}.mcool")
+            for sample in SAMPLES
+            if not (MCOOL_DIR / f"GSE152918_{sample}.mcool").exists()
+        ]
+        if missing:
+            raise WorkflowError(
+                "Missing required .mcool input(s):\n"
+                + "\n".join(missing)
+                + "\nEdit SAMPLES in robustad_predictions_new/Snakefile or add the missing file(s)."
+            )
+        if not PANEL.exists():
+            raise WorkflowError(f"Missing RobusTAD reference panel: {PANEL}")
+        if not ROBUSTAD_ROOT.exists():
+            raise WorkflowError(f"Missing local RobusTAD source tree: {ROBUSTAD_ROOT}")
+        if not PYTHON.exists():
+            raise WorkflowError(f"Missing refhic Python executable: {PYTHON}")
+
+
+rule robustad_infer:
+    input:
+        WORKFLOW_DIR / "preflight.ok"
+    output:
+        boundary = OUTPUT_ROOT / "{sample}" / "{chrom}" / RESOLUTION_LABEL / "boundary.bed",
+        tads_hq = OUTPUT_ROOT / "{sample}" / "{chrom}" / RESOLUTION_LABEL / "tads_hq.bed",
+        tads_all = OUTPUT_ROOT / "{sample}" / "{chrom}" / RESOLUTION_LABEL / "tads_all.bed",
+    log:
+        OUTPUT_ROOT / "{sample}" / "{chrom}" / RESOLUTION_LABEL / "robustad.log"
+    threads: 1
+    shell:
+        r"""
+        {PYTHON} {WORKFLOW_DIR}/run_robustad_inference.py \
+            --sample {wildcards.sample} \
+            --chrom {wildcards.chrom} \
+            --resolution {RESOLUTION} \
+            --resolution-label {RESOLUTION_LABEL} \
+            --mcool-dir {MCOOL_DIR} \
+            --output-root {OUTPUT_ROOT} \
+            --panel {PANEL} \
+            --robustad-root {ROBUSTAD_ROOT} \
+            --mplconfigdir {WORKFLOW_DIR}/.matplotlib \
+            --minW {MINW_KB} \
+            --maxW {MAXW_KB} \
+            --mind {MIND_KB} \
+            --ratio {RATIO} \
+            --alpha {ALPHA} \
+            --mintad {MINTAD_BP} \
+            --maxtad {MAXTAD_BP} \
+            --delta {DELTA} \
+            > {log} 2>&1
+        """

@@ -1,0 +1,76 @@
+import glob
+import os
+
+JUICER_JAR = "Juicer/juicer/scripts/common/juicer_tools.jar"
+HIC_DIR = "hemato_cells"
+ONTAD = "OnTAD/OnTAD/src/OnTAD"
+
+RESOLUTIONS = [100000, 250000, 500000, 1000000, 2500000]
+CHROMS = [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,"X", "Y", "M"]
+
+# detect stages automatically
+HIC_FILES = glob.glob(f"{HIC_DIR}/GSE152918_*.hic")
+STAGES = [os.path.basename(f).replace("GSE152918_","").replace(".hic","") for f in HIC_FILES]
+
+
+def res_name(res):
+    if res >= 1000000:
+        return f"{res//1000000}mb"
+    elif res >= 1000:
+        return f"{res//1000}kb"
+    else:
+        return f"{res}bp"
+
+
+rule all:
+    input:
+        expand(
+            "hemato_cells/{stage}/chr{chr}/{resname}/tads.tad",
+            stage=STAGES,
+            chr=CHROMS,
+            resname=[res_name(r) for r in RESOLUTIONS]
+        )
+
+
+rule dump_hic:
+    input:
+        hic=lambda wildcards: f"{HIC_DIR}/GSE152918_{wildcards.stage}.hic"
+    output:
+        raw="hemato_cells/{stage}/chr{chr}/{resname}/hic_matrix.txt"
+    params:
+        res=lambda wildcards: int(
+            wildcards.resname.replace("kb","000").replace("mb","000000")
+        )
+    shell:
+        """
+        mkdir -p $(dirname {output.raw})
+
+        java -Xmx32g -jar {JUICER_JAR} dump observed KR \
+        {input.hic} {wildcards.chr} {wildcards.chr} BP {params.res} {output.raw} -d
+        """
+
+
+rule clean_matrix:
+    input:
+        "hemato_cells/{stage}/chr{chr}/{resname}/hic_matrix.txt"
+    output:
+        "hemato_cells/{stage}/chr{chr}/{resname}/hic_matrix.cleaned.txt"
+    shell:
+        """
+        awk '{{ $1=$1; print }}' {input} > {output}
+        """
+
+########################################
+# 3. Run OnTAD
+########################################
+rule run_ontad:
+    input:
+        "hemato_cells/{stage}/chr{chr}/{res}/hic_matrix.cleaned.txt"
+    output:
+        "hemato_cells/{stage}/chr{chr}/{res}/tads.tad"
+    params:
+        prefix="hemato_cells/{stage}/chr{chr}/{res}/tads"
+    shell:
+        """
+        {ONTAD} {input} -o {params.prefix} -penalty 0.1
+        """

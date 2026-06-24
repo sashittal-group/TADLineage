@@ -1,0 +1,108 @@
+Reading TAD data from text files...
+  CN:  148 TADs
+  ES:  165 TADs
+  NPC: 142 TADs
+
+Calculating pairwise parsimony costs for chr1 (Ct=1.5, Cb=2.0)...
+
+======================================================================
+PAIRWISE PARSIMONY COSTS
+======================================================================
+
+CN <-> ES:
+  TAD RF distance:      231
+  Boundary RF distance: 308
+  Total Cost:           962.50
+
+CN <-> NPC:
+  TAD RF distance:      158
+  Boundary RF distance: 180
+  Total Cost:           597.00
+
+ES <-> NPC:
+  TAD RF distance:      225
+  Boundary RF distance: 278
+  Total Cost:           893.50
+
+======================================================================
+Reading TAD data from text files...
+  CN:  144 TADs
+  ES:  158 TADs
+  NPC: 139 TADs
+
+Calculating pairwise parsimony costs for chr2 (Ct=1.5, Cb=2.0)...
+
+======================================================================
+PAIRWISE PARSIMONY COSTS
+======================================================================
+
+CN <-> ES:
+  TAD RF distance:      254
+  Boundary RF distance: 342
+  Total Cost:           1065.00
+
+CN <-> NPC:
+  TAD RF distance:      169
+  Boundary RF distance: 216
+  Total Cost:           685.50
+
+ES <-> NPC:
+  TAD RF distance:      227
+  Boundary RF distance: 290
+  Total Cost:           920.50
+
+======================================================================
+Reading TAD data from text files...
+  CN:  119 TADs
+  ES:  115 TADs
+  NPC: 112 TADs
+
+Calculating pairwise parsimony costs for chr5 (Ct=1.5, Cb=2.0)...
+
+======================================================================
+PAIRWISE PARSIMONY COSTS
+======================================================================
+
+CN <-> ES:
+  TAD RF distance:      200
+  Boundary RF distance: 262
+  Total Cost:           824.00
+
+CN <-> NPC:
+  TAD RF distance:      133
+  Boundary RF distance: 140
+  Total Cost:           479.50
+
+ES <-> NPC:
+  TAD RF distance:      193
+  Boundary RF distance: 244
+  Total Cost:           777.50
+
+======================================================================
+Reading TAD data from text files...
+  CN:  68 TADs
+  ES:  69 TADs
+  NPC: 74 TADs
+
+Calculating pairwise parsimony costs for chrX (Ct=1.5, Cb=2.0)...
+
+======================================================================
+PAIRWISE PARSIMONY COSTS
+======================================================================
+
+CN <-> ES:
+  TAD RF distance:      123
+  Boundary RF distance: 202
+  Total Cost:           588.50
+
+CN <-> NPC:
+  TAD RF distance:      98
+  Boundary RF distance: 124
+  Total Cost:           395.00
+
+ES <-> NPC:
+  TAD RF distance:      125
+  Boundary RF distance: 194
+  Total Cost:           575.50
+
+======================================================================

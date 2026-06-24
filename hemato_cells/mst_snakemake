@@ -1,0 +1,97 @@
+# Snakefile
+
+import os
+import pandas as pd
+
+# Parameters
+CHROMS = [str(i) for i in range(1, 20)]
+RESOLUTIONS = ["100kb", "250kb", "500kb", "1mb", "2mb"]
+TOLERANCES = [0, 1, 2, 3, 4, 5]
+MODES = ["convex", "LexBoundaryFirst"]
+
+# Generate all MST image outputs
+MST_IMAGES = expand(
+    "msts/chr{chrom}/{res}/mstree_tol_{tol}_{mode}.png",
+    chrom=CHROMS,
+    res=RESOLUTIONS,
+    tol=TOLERANCES,
+    mode=MODES
+)
+
+# Corresponding tree distance txt files
+TREE_DISTS = expand(
+    "msts/chr{chrom}/{res}/tree_distance_tol_{tol}_{mode}.txt",
+    chrom=CHROMS,
+    res=RESOLUTIONS,
+    tol=TOLERANCES,
+    mode=MODES
+)
+
+rule all:
+    input:
+        MST_IMAGES,
+        TREE_DISTS,
+        "msts/tree_distance_summary.csv"
+
+
+rule run_mst:
+    output:
+        mst_img="msts/chr{chrom}/{res}/mstree_tol_{tol}_{mode}.png",
+        tree_dist="msts/chr{chrom}/{res}/tree_distance_tol_{tol}_{mode}.txt"
+    params:
+        chrom="{chrom}",
+        res="{res}",
+        tol="{tol}",
+        mode="{mode}"
+    shell:
+        """
+        mkdir -p $(dirname {output.mst_img})
+
+        python check_mst.py \
+            --chrom {params.chrom} \
+            --resolution {params.res} \
+            --tolerance {params.tol} \
+            --mode {params.mode}
+        """
+
+
+rule aggregate_tree_distances:
+    input:
+        TREE_DISTS
+    output:
+        "msts/tree_distance_summary.csv"
+    run:
+        import pandas as pd
+        import os
+
+        records = []
+
+        for f in input:
+
+            parts = f.split("/")
+            chrom = parts[1].replace("chr","")
+            res = parts[2]
+
+            # parse tolerance and mode
+            filename = os.path.basename(f)
+            temp = filename.replace("tree_distance_tol_","").replace(".txt","")
+
+            tol, mode = temp.split("_",1)
+
+            with open(f) as fh:
+                dist = float(fh.read().strip())
+
+            records.append({
+                "chrom": chrom,
+                "resolution": res,
+                "tolerance": int(tol),
+                "mode": mode,
+                "tree_edit_distance": dist
+            })
+
+        df = pd.DataFrame(records)
+
+        os.makedirs(os.path.dirname(output[0]), exist_ok=True)
+        df.to_csv(output[0], index=False)
+
+        print("Saved aggregated tree distances to", output[0])

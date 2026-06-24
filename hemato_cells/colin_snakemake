@@ -1,0 +1,34 @@
+# Snakefile
+
+# Parameters
+CHROMS = [str(i) for i in range(1, 20)]
+RESOLUTIONS = ["100kb", "250kb", "500kb", "1mb", "2mb"]
+TOLERANCES = [0, 1, 2, 3, 4, 5]
+
+# Generate all CSV output targets
+OUTPUTS = expand(
+    "3nodes/chr{chrom}/{res}/three_node_paths_tol_{tol}.csv",
+    chrom=CHROMS,
+    res=RESOLUTIONS,
+    tol=TOLERANCES
+)
+
+rule all:
+    input:
+        OUTPUTS
+
+rule run_three_node_analysis:
+    output:
+        "3nodes/chr{chrom}/{res}/three_node_paths_tol_{tol}.csv"
+    params:
+        chrom="{chrom}",
+        res="{res}",
+        tol="{tol}"
+    shell:
+        """
+        mkdir -p $(dirname {output})
+        python check_colinearity.py \
+            --chrom {params.chrom} \
+            --resolution {params.res} \
+            --tolerance {params.tol}
+        """

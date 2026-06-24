@@ -1,0 +1,42 @@
+CELLS = ["ESC","NPC","Neuron"]
+CHRS = [f"chr{i}" for i in range(1,20)]
+PENALTIES = ["0.1","0.2","0.3"]
+
+CELL_OUT = {
+    "ESC": "ESC",
+    "NPC": "NPC",
+    "Neuron": "N"
+}
+
+rule all:
+    input:
+        expand(
+            "mouse_neuron/{outcell}/{chr}_{penalty}/{chr}_{penalty}.tad",
+            outcell=["ESC","NPC","N"],
+            chr=CHRS,
+            penalty=PENALTIES
+        )
+
+rule run_ontad:
+    input:
+        hic=lambda wc:
+            f"mouse_neuron/Normalized_Heatmaps.100kb."
+            f"{'Neuron' if wc.outcell=='N' else wc.outcell}.HindIII/"
+            f"Normalized.{ 'Neuron' if wc.outcell=='N' else wc.outcell }.HindIII."
+            f"{wc.chr}_{wc.chr}.100000.my5c.txt"
+
+    output:
+        tad="mouse_neuron/{outcell}/{chr}_{penalty}/{chr}_{penalty}.tad"
+
+    params:
+        penalty="{penalty}",
+        prefix="mouse_neuron/{outcell}/{chr}_{penalty}/{chr}_{penalty}"
+
+    shell:
+        """
+        mkdir -p mouse_neuron/{wildcards.outcell}/{wildcards.chr}_{wildcards.penalty}
+
+        OnTAD/OnTAD/src/OnTAD {input.hic} \
+        -o {params.prefix} \
+        -penalty {params.penalty}
+        """

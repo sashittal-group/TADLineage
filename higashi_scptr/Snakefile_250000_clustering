@@ -1,0 +1,79 @@
+CHROMS = [f"chr{i}" for i in range(1, 20)] + ["chrX"]
+RESOLUTION_BP = 250_000
+RESOLUTION_DIR = str(RESOLUTION_BP)
+PYTHON = "/Users/PSLabMonisha/miniforge3/envs/higashi/bin/python"
+GENOME_SIZES = "/Users/PSLabMonisha/Desktop/tads/genome.chrom.sizes"
+
+
+rule all:
+    input:
+        expand(
+            "results/{resolution}/{chrom}/cluster_results.txt",
+            resolution=RESOLUTION_DIR,
+            chrom=CHROMS,
+        ),
+        expand(
+            "results/{resolution}/{chrom}/cluster_figure.png",
+            resolution=RESOLUTION_DIR,
+            chrom=CHROMS,
+        )
+
+
+rule setup_inputs:
+    threads: 1
+    input:
+        script="setup_inputs.py",
+        genome_sizes=GENOME_SIZES
+    output:
+        filelist="data/{resolution}/{chrom}/filelist.txt",
+        labels="data/{resolution}/{chrom}/label_info.pickle"
+    params:
+        resolution_bp=RESOLUTION_BP
+    shell:
+        "{PYTHON} setup_inputs.py "
+        "--chromosome {wildcards.chrom} "
+        "--resolution {params.resolution_bp}"
+
+
+rule train_higashi_embeddings:
+    input:
+        filelist="data/{resolution}/{chrom}/filelist.txt",
+        labels="data/{resolution}/{chrom}/label_info.pickle"
+    output:
+        config="results/{resolution}/{chrom}/config.json",
+        embedding="temp/{resolution}/{chrom}/embed/scptr_embed_0_origin.npy"
+    params:
+        resolution_bp=RESOLUTION_BP
+    shell:
+        "{PYTHON} run_higashi_scptr_250000_clustering.py "
+        "--chromosome {wildcards.chrom} "
+        "--resolution {params.resolution_bp}"
+
+
+rule cluster_embeddings:
+    input:
+        labels="data/{resolution}/{chrom}/label_info.pickle",
+        embedding="temp/{resolution}/{chrom}/embed/scptr_embed_0_origin.npy"
+    output:
+        results="results/{resolution}/{chrom}/cluster_results.txt"
+    params:
+        resolution_bp=RESOLUTION_BP
+    shell:
+        "{PYTHON} cluster_embeddings.py "
+        "--chromosome {wildcards.chrom} "
+        "--resolution {params.resolution_bp}"
+
+
+rule plot_clusters:
+    input:
+        results="results/{resolution}/{chrom}/cluster_results.txt",
+        labels="data/{resolution}/{chrom}/label_info.pickle",
+        embedding="temp/{resolution}/{chrom}/embed/scptr_embed_0_origin.npy"
+    output:
+        figure="results/{resolution}/{chrom}/cluster_figure.png"
+    params:
+        resolution_bp=RESOLUTION_BP
+    shell:
+        "{PYTHON} plot_clusters.py "
+        "--chromosome {wildcards.chrom} "
+        "--resolution {params.resolution_bp}"

@@ -1,0 +1,106 @@
+# Snakefile
+
+import os
+import pandas as pd
+
+# Parameters
+RESOLUTIONS = ["100kb", "250kb", "500kb", "1mb", "2mb"]
+TOLERANCES = [0, 1, 2, 3, 4, 5]
+MODES = ["convex", "LexBoundaryFirst"]
+EDGE_FACTORS = [0.5, 1.0, 1.5, 2.0]
+
+
+# Expected MST images
+MST_IMAGES = expand(
+    "msts/genomewide/{res}/mstree_tol_{tol}_{mode}_ef_{ef}.png",
+    res=RESOLUTIONS,
+    tol=TOLERANCES,
+    mode=MODES,
+    ef=EDGE_FACTORS
+)
+
+# Expected tree distance files
+TREE_DISTS = expand(
+    "msts/genomewide/{res}/tree_distance_tol_{tol}_{mode}_ef_{ef}.txt",
+    res=RESOLUTIONS,
+    tol=TOLERANCES,
+    mode=MODES,
+    ef=EDGE_FACTORS
+)
+
+
+rule all:
+    input:
+        MST_IMAGES,
+        TREE_DISTS,
+        "msts/tree_distance_summary_agg.csv"
+
+
+rule run_mst:
+    output:
+        mst_img="msts/genomewide/{res}/mstree_tol_{tol}_{mode}_ef_{ef}.png",
+        tree_dist="msts/genomewide/{res}/tree_distance_tol_{tol}_{mode}_ef_{ef}.txt"
+
+    params:
+        res="{res}",
+        tol="{tol}",
+        mode="{mode}",
+        ef="{ef}"
+
+    shell:
+        """
+        mkdir -p $(dirname {output.mst_img})
+
+        python check_agg_mst.py \
+            --resolution {params.res} \
+            --tolerance {params.tol} \
+            --mode {params.mode} \
+            --preferred-edge-factor {params.ef}
+        """
+
+
+rule aggregate_tree_distances:
+    input:
+        TREE_DISTS
+
+    output:
+        "msts/tree_distance_summary_agg.csv"
+
+    run:
+        import pandas as pd
+        import os
+
+        records = []
+
+        for f in input:
+
+            parts = f.split("/")
+            res = parts[2]
+
+            filename = os.path.basename(f)
+            temp = filename.replace("tree_distance_tol_","").replace(".txt","")
+
+            # Parse: tol_{tol}_{mode}_ef_{ef}
+            tokens = temp.split("_")
+            tol = int(tokens[0])
+            mode = tokens[1]
+            # tokens[2] is "ef"
+            ef = float(tokens[3])
+
+            with open(f) as fh:
+                dist = float(fh.read().strip())
+
+            records.append({
+                "resolution": res,
+                "tolerance": tol,
+                "mode": mode,
+                "edge_factor": ef,
+                "tree_edit_distance": dist
+            })
+
+        df = pd.DataFrame(records)
+
+        os.makedirs(os.path.dirname(output[0]), exist_ok=True)
+        df.to_csv(output[0], index=False)
+
+        print("Saved aggregated tree distances to", output[0])

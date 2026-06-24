@@ -1,0 +1,125 @@
+VARIANTS = [
+    "inferred",
+    "inferred_given_root",
+    "inferred_given_root_weighted",
+    "inferred_given_root_weighted_updated",
+]
+
+TOLS_BY_VARIANT = {
+    "inferred": [0, 1, 2],
+    "inferred_given_root": [0, 1, 2],
+    "inferred_given_root_weighted": [0, 1, 2],
+    "inferred_given_root_weighted_updated": [5, 6, 7, 8, 9, 10],
+}
+
+LINE1 = ["MEP", "MKP", "MK"]
+LINE2 = ["GMP", "G"]
+CHRS = [str(i) for i in range(1, 20)]
+RESOLUTIONS = ["1mb", "2mb", "100kb", "250kb", "500kb"]
+RESULT_ROOT = ".."
+DIFFDOMAIN_ALPHA = 0.05
+EVENT_SOURCE_BIAS_FACTOR = 20.0
+EVENT_TARGET_WEIGHT = 5
+DIFFDOMAIN_CLASSIFIER_LIMIT = 3
+
+
+def variant_jsons(variant):
+    return expand(
+        RESULT_ROOT + "/{variant}/jsons/diffdomain_edge_events_chr{chr}_{res}_{l1}_{l2}_{tol}.json",
+        variant=variant,
+        chr=CHRS,
+        res=RESOLUTIONS,
+        l1=LINE1,
+        l2=LINE2,
+        tol=TOLS_BY_VARIANT[variant],
+    )
+
+
+EDGE_JSONS = [path for variant in VARIANTS for path in variant_jsons(variant)]
+
+EDGE_FIGURES = [
+    path
+    for variant in VARIANTS
+    for path in expand(
+        RESULT_ROOT + "/{variant}/figures/diffdomain_merge_split/diffdomain_merge_split_chr{chr}_{res}_{l1}_{l2}.png",
+        variant=variant,
+        chr=CHRS,
+        res=RESOLUTIONS,
+        l1=LINE1,
+        l2=LINE2,
+    )
+]
+
+AGGREGATE_FIGURES = expand(
+    RESULT_ROOT + "/{variant}/figures/diffdomain_merge_split/diffdomain_similarity_by_{group}.png",
+    variant=VARIANTS,
+    group=["chrom", "resolution"],
+)
+
+
+rule all:
+    input:
+        EDGE_JSONS,
+        EDGE_FIGURES,
+        AGGREGATE_FIGURES
+
+
+rule summarize_diffdomain_edge_events:
+    output:
+        RESULT_ROOT + "/{variant}/jsons/diffdomain_edge_events_chr{chr}_{res}_{l1}_{l2}_{tol}.json"
+    params:
+        outdir=lambda wc: wc.variant
+    shell:
+        """
+        export MPLCONFIGDIR=.matplotlib-cache
+        python analyze_diffdomain_merge_split_events.py \
+            --variant {wildcards.variant} \
+            --leaf1 {wildcards.l1} \
+            --leaf2 {wildcards.l2} \
+            --chrom {wildcards.chr} \
+            --resolution {wildcards.res} \
+            --tolerance {wildcards.tol} \
+            --outdir {params.outdir} \
+            --diffdomain-alpha {DIFFDOMAIN_ALPHA} \
+            --event-source-bias-factor {EVENT_SOURCE_BIAS_FACTOR} \
+            --event-target-weight {EVENT_TARGET_WEIGHT} \
+            --classifier-limit {DIFFDOMAIN_CLASSIFIER_LIMIT} \
+            --output {output}
+        """
+
+
+rule plot_diffdomain_edge_merge_split_events:
+    input:
+        json_files=lambda wc: expand(
+            RESULT_ROOT + "/{variant}/jsons/diffdomain_edge_events_chr{chr}_{res}_{l1}_{l2}_{tol}.json",
+            variant=wc.variant,
+            chr=wc.chr,
+            res=wc.res,
+            l1=wc.l1,
+            l2=wc.l2,
+            tol=TOLS_BY_VARIANT[wc.variant],
+        )
+    output:
+        RESULT_ROOT + "/{variant}/figures/diffdomain_merge_split/diffdomain_merge_split_chr{chr}_{res}_{l1}_{l2}.png"
+    shell:
+        """
+        export MPLCONFIGDIR=.matplotlib-cache
+        python plot_diffdomain_merge_split_events.py edge \
+            --inputs {input.json_files} \
+            --output {output}
+        """
+
+
+rule plot_diffdomain_similarity_aggregate:
+    input:
+        json_files=lambda wc: variant_jsons(wc.variant)
+    output:
+        RESULT_ROOT + "/{variant}/figures/diffdomain_merge_split/diffdomain_similarity_by_{group}.png"
+    shell:
+        """
+        export MPLCONFIGDIR=.matplotlib-cache
+        python plot_diffdomain_merge_split_events.py aggregate \
+            --inputs {input.json_files} \
+            --group-by {wildcards.group} \
+            --output {output}
+        """

@@ -1,0 +1,77 @@
+VARIANTS = [
+    # "inferred",
+    # "inferred_given_root",
+    # "inferred_given_root_weighted",
+    "inferred_given_root_weighted_updated",
+]
+
+LINE1 = ["MEP", "MKP", "MK"]
+LINE2 = ["GMP", "G"]
+CHRS = [str(i) for i in range(1, 20)]
+RESOLUTIONS = ["1mb", "2mb", "100kb", "250kb", "500kb"]
+TOLS = [5,6,7,8,9,10]
+
+EDGE_JSONS = expand(
+    "{variant}/jsons/edge_events_chr{chr}_{res}_{l1}_{l2}_{tol}.json",
+    variant=VARIANTS,
+    chr=CHRS,
+    res=RESOLUTIONS,
+    l1=LINE1,
+    l2=LINE2,
+    tol=TOLS,
+)
+
+EDGE_FIGURES = expand(
+    "{variant}/figures/merge_split/merge_split_chr{chr}_{res}_{l1}_{l2}.png",
+    variant=VARIANTS,
+    chr=CHRS,
+    res=RESOLUTIONS,
+    l1=LINE1,
+    l2=LINE2,
+)
+
+
+rule all:
+    input:
+        EDGE_JSONS,
+        EDGE_FIGURES
+
+
+rule summarize_edge_events:
+    output:
+        "{variant}/jsons/edge_events_chr{chr}_{res}_{l1}_{l2}_{tol}.json"
+    params:
+        outdir=lambda wc: wc.variant
+    shell:
+        """
+        python analyze_edge_merge_split_events.py \
+            --variant {wildcards.variant} \
+            --leaf1 {wildcards.l1} \
+            --leaf2 {wildcards.l2} \
+            --chrom {wildcards.chr} \
+            --resolution {wildcards.res} \
+            --tolerance {wildcards.tol} \
+            --outdir {params.outdir} \
+            --output {output}
+        """
+
+
+rule plot_edge_merge_split_events:
+    input:
+        json_files=lambda wc: expand(
+            "{variant}/jsons/edge_events_chr{chr}_{res}_{l1}_{l2}_{tol}.json",
+            variant=wc.variant,
+            chr=wc.chr,
+            res=wc.res,
+            l1=wc.l1,
+            l2=wc.l2,
+            tol=TOLS,
+        )
+    output:
+        "{variant}/figures/merge_split/merge_split_chr{chr}_{res}_{l1}_{l2}.png"
+    shell:
+        """
+        python plot_merge_split_events.py \
+            --inputs {input.json_files} \
+            --output {output}
+        """

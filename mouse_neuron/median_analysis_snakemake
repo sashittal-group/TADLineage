@@ -1,0 +1,89 @@
+import os
+import pandas as pd
+
+CHRS = [f"chr{i}" for i in range(1, 20)]
+PENALTIES = ["0.1", "0.2", "0.3"]
+TOLERANCE = 5
+
+
+rule all:
+    input:
+        expand(
+            "NPC/{chr}_{penalty}/{chr}_{penalty}_inferred_{tol}.tad",
+            chr=CHRS,
+            penalty=PENALTIES,
+            tol=TOLERANCE
+        ),
+        "NPC/median_metrics.csv"
+
+
+rule run_median_analysis:
+    input:
+        tadA="ESC/{chr}_{penalty}/{chr}_{penalty}.tad",
+        tadB="N/{chr}_{penalty}/{chr}_{penalty}.tad",
+        reference="NPC/{chr}_{penalty}/{chr}_{penalty}.tad"
+    output:
+        tad="NPC/{chr}_{penalty}/{chr}_{penalty}_inferred_{tol}.tad",
+        metrics="NPC/{chr}_{penalty}/{chr}_{penalty}_metrics_{tol}.txt"
+    params:
+        tol=TOLERANCE
+    shell:
+        """
+        python median_analysis.py \
+            --tadA {input.tadA} \
+            --tadB {input.tadB} \
+            --reference {input.reference} \
+            --tolerance {params.tol} \
+        > {output.metrics}
+        """
+
+
+rule combine_metrics:
+    input:
+        metrics=expand(
+            "NPC/{chr}_{penalty}/{chr}_{penalty}_metrics_{tol}.txt",
+            chr=CHRS,
+            penalty=PENALTIES,
+            tol=TOLERANCE
+        )
+    output:
+        csv="NPC/median_metrics.csv"
+    run:
+        rows = []
+
+        for f in input.metrics:
+
+            parts = os.path.basename(f).split("_")
+            chr_name = parts[0]
+            penalty = parts[1]
+
+            precision = recall = f1 = None
+            novel = None
+
+            with open(f) as fh:
+                for line in fh:
+
+                    if line.startswith("Precision:"):
+                        precision = float(line.strip().split()[1])
+
+                    elif line.startswith("Recall:"):
+                        recall = float(line.strip().split()[1])
+
+                    elif line.startswith("F1:"):
+                        f1 = float(line.strip().split()[1])
+
+                    elif "absent in leaves" in line:
+                        # next line contains the number
+                        novel = int(next(fh).strip())
+
+            rows.append({
+                "chr": chr_name,
+                "penalty": penalty,
+                "precision": precision,
+                "recall": recall,
+                "f1": f1,
+                "novel_root_tads": novel
+            })
+
+        df = pd.DataFrame(rows)
+        df.to_csv(output.csv, index=False)
