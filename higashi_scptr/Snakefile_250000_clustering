@@ -5,6 +5,10 @@ PYTHON = "/Users/PSLabMonisha/miniforge3/envs/higashi/bin/python"
 GENOME_SIZES = "/Users/PSLabMonisha/Desktop/tads/genome.chrom.sizes"
 
 
+wildcard_constraints:
+    chrom="chr[0-9]+|chrX"
+
+
 rule all:
     input:
         expand(
@@ -16,7 +20,9 @@ rule all:
             "results/{resolution}/{chrom}/cluster_figure.png",
             resolution=RESOLUTION_DIR,
             chrom=CHROMS,
-        )
+        ),
+        f"results/{RESOLUTION_DIR}/all/cluster_results.txt",
+        f"results/{RESOLUTION_DIR}/all/cluster_figure.png"
 
 
 rule setup_inputs:
@@ -62,6 +68,32 @@ rule cluster_embeddings:
         "{PYTHON} cluster_embeddings.py "
         "--chromosome {wildcards.chrom} "
         "--resolution {params.resolution_bp}"
+
+
+rule cluster_all_embeddings:
+    input:
+        expand(
+            "temp/{resolution}/{chrom}/embed/scptr_embed_0_origin.npy",
+            resolution=RESOLUTION_DIR,
+            chrom=CHROMS,
+        ),
+        expand(
+            "data/{resolution}/{chrom}/label_info.pickle",
+            resolution=RESOLUTION_DIR,
+            chrom=CHROMS,
+        )
+    output:
+        results=f"results/{RESOLUTION_DIR}/all/cluster_results.txt",
+        figure=f"results/{RESOLUTION_DIR}/all/cluster_figure.png"
+    params:
+        resolution_bp=RESOLUTION_BP,
+        pca_dim=2,
+        n_neighbors=6
+    shell:
+        "{PYTHON} cluster_all_embeddings.py "
+        "--resolution {params.resolution_bp} "
+        "--pca-dim {params.pca_dim} "
+        "--n-neighbors {params.n_neighbors}"
 
 
 rule plot_clusters:

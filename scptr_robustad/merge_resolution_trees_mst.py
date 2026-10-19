@@ -125,7 +125,7 @@ def main():
     )
     parser.add_argument(
         "--csv",
-        default="results/scptr_tree_distance/all_tree_distances.csv",
+        default="results_updated/scptr_tree_distance/all_tree_distances.csv",
         help="Aggregated CSV from aggregate_tree_distance_json.py",
     )
     parser.add_argument(
@@ -151,7 +151,7 @@ def main():
         raise SystemExit(f"CSV not found: {csv_path}")
 
     output_path = Path(args.output) if args.output else Path(
-        f"results/scptr_tree_distance/merged_mst_{args.resolution}.png"
+        f"results_updated/scptr_tree_distance/merged_mst_{args.resolution}.png"
     )
 
     edge_weight_avg, used_rows = load_aggregated_edge_weights(

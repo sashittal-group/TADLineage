@@ -1,15 +1,27 @@
+import sys
+
 CHROMS = [f"chr{i}" for i in range(1, 20)] + ["chrX"]
 TOLERANCES = list(range(6))
-RESOLUTIONS = ["1000kb"]
+RESOLUTIONS = ["250kb"]
 K = 5
 TOP_TADS_PER_CELL = 20
 MAX_UNIQUE_BOUNDARIES = 100
+PYTHON = sys.executable
+PER_STAGE_BY_RESOLUTION = {
+    "250kb": 10,
+}
+
+
+wildcard_constraints:
+    chrom="chr[0-9]+|chrX"
 
 
 rule all:
     input:
         expand("results/scptr_runs_all_cells/{resolution}/{chrom}/tol_{tol}.json", resolution=RESOLUTIONS, chrom=CHROMS, tol=TOLERANCES),
         expand("results/scptr_runs_all_cells/{resolution}/{chrom}/tol_{tol}.png", resolution=RESOLUTIONS, chrom=CHROMS, tol=TOLERANCES),
+        expand("results/scptr_runs_all_cells/{resolution}/all/tol_{tol}.json", resolution=RESOLUTIONS, tol=TOLERANCES),
+        expand("results/scptr_runs_all_cells/{resolution}/all/tol_{tol}.png", resolution=RESOLUTIONS, tol=TOLERANCES),
         "results/scptr_tree_distance/all_tree_distances.csv"
 
 
@@ -17,28 +29,61 @@ rule run_scptr_robustad_weighted_em:
     output:
         png="results/scptr_runs_all_cells/{resolution}/{chrom}/tol_{tol}.png",
         json="results/scptr_runs_all_cells/{resolution}/{chrom}/tol_{tol}.json"
+    log:
+        "logs/scptr_runs_all_cells/{resolution}/{chrom}/tol_{tol}.log"
     params:
         top_tads_per_cell=TOP_TADS_PER_CELL,
         max_unique_boundaries=MAX_UNIQUE_BOUNDARIES,
+        per_stage=lambda wildcards: PER_STAGE_BY_RESOLUTION.get(wildcards.resolution, 0),
         k=K
     shell:
-        "python em_cluster_scptr_robustad_weighted.py "
+        "{PYTHON} em_cluster_scptr_robustad_weighted.py "
         "--chromosome {wildcards.chrom} "
         "--resolution {wildcards.resolution} "
         "--tolerance {wildcards.tol} "
         "--top-tads-per-cell {params.top_tads_per_cell} "
         "--max-unique-boundaries {params.max_unique_boundaries} "
+        "--per-stage {params.per_stage} "
         "--k {params.k} "
         "--json-out {output.json} "
-        "--output {output.png}"
+        "--output {output.png} "
+        "> {log} 2>&1"
+
+
+rule run_scptr_robustad_weighted_em_all_chr:
+    output:
+        png="results/scptr_runs_all_cells/{resolution}/all/tol_{tol}.png",
+        json="results/scptr_runs_all_cells/{resolution}/all/tol_{tol}.json"
+    log:
+        "logs/scptr_runs_all_cells/{resolution}/all/tol_{tol}.log"
+    params:
+        top_tads_per_cell=TOP_TADS_PER_CELL,
+        max_unique_boundaries=MAX_UNIQUE_BOUNDARIES,
+        per_stage=lambda wildcards: PER_STAGE_BY_RESOLUTION.get(wildcards.resolution, 0),
+        k=K
+    shell:
+        "{PYTHON} em_cluster_scptr_robustad_weighted_all_chr.py "
+        "--resolution {wildcards.resolution} "
+        "--tolerance {wildcards.tol} "
+        "--top-tads-per-cell {params.top_tads_per_cell} "
+        "--max-unique-boundaries {params.max_unique_boundaries} "
+        "--per-stage {params.per_stage} "
+        "--k {params.k} "
+        "--json-out {output.json} "
+        "--output {output.png} "
+        "> {log} 2>&1"
 
 
 rule aggregate_tree_distance:
     input:
-        expand("results/scptr_runs_all_cells/{resolution}/{chrom}/tol_{tol}.json", resolution=RESOLUTIONS, chrom=CHROMS, tol=TOLERANCES)
+        expand("results/scptr_runs_all_cells/{resolution}/{chrom}/tol_{tol}.json", resolution=RESOLUTIONS, chrom=CHROMS, tol=TOLERANCES),
+        expand("results/scptr_runs_all_cells/{resolution}/all/tol_{tol}.json", resolution=RESOLUTIONS, tol=TOLERANCES)
     output:
         "results/scptr_tree_distance/all_tree_distances.csv"
+    log:
+        "logs/scptr_tree_distance/all_tree_distances.log"
     shell:
-        "python aggregate_tree_distance_json.py "
+        "{PYTHON} aggregate_tree_distance_json.py "
         "--input-glob 'results/scptr_runs_all_cells/**/*.json' "
-        "--output-csv {output}"
+        "--output-csv {output} "
+        "> {log} 2>&1"

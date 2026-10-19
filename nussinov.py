@@ -1291,36 +1291,38 @@ if __name__ == "__main__":
     #     Cb=1.0,
     #     verbose=True
     # )
-    test_dp_vs_ilp(
-        num_tests=100,
-        min_children=2,
-        max_children=5,
-        min_val=1,
-        max_val=20,
-        num_intervals=10,
-        max_per_leaf=5,
-        Ct=1.0,
-        Cb=1.0,
-        verbose=True)
+    # test_dp_vs_ilp(
+    #     num_tests=100,
+    #     min_children=2,
+    #     max_children=5,
+    #     min_val=1,
+    #     max_val=20,
+    #     num_intervals=10,
+    #     max_per_leaf=5,
+    #     Ct=1.0,
+    #     Cb=1.0,
+    #     verbose=True)
 
-    # edges = [(0, 1), (0, 2)]
-    # leaf_intervals = { 
-    #     1: ['[1,5]','[6,10]'],
-    #     2: ['[11,15]','[16,20]'],
+    edges = [(0, 1), (0, 2), (0,3), (0,4)]
+    leaf_intervals = { 
+        1: ['[1,50]','[60,100]', '[2,5]'],
+        2: ['[1,52]','[53,100]', '[2,6]'],
+        3: ['[1,54]','[55,100]', '[2,7]'],
+        4: ['[1,56]','[57,100]', '[2,8]'],
 
-    # }
-    # start_boundaries = [1,11,5,6,15,10,16,20]
-    # end_boundaries = [1,11,5,6,15,10,16,20]
+    }
+    start_boundaries = [1,2,5,6,7,8,50,52,53,54,55,56,57,60,100]
+    end_boundaries = [1,2,5,6,7,8,50,52,53,54,55,56,57,60,100]
     
-    # # # Run with trace enabled
-    # result = infer_tads_with_dp(
-    #     edges, leaf_intervals, start_boundaries, end_boundaries,
-    #     Ct=1.0, Cb=1.0, trace=True
-    # )
-    # dp_intervals, dp_score, trace_log = result
+    # # Run with trace enabled
+    result = infer_tads_with_dp(
+        edges, leaf_intervals, start_boundaries, end_boundaries,
+        Ct=1.0, Cb=1.0, trace=True
+    )
+    dp_intervals, dp_score, trace_log = result
     
-    # print(f"DP intervals: {sorted(dp_intervals)}")
-    # print(f"DP score: {dp_score:.6f}")
+    print(f"DP intervals: {sorted(dp_intervals)}")
+    print(f"DP score: {dp_score:.6f}")
 
     # ilp_cost, is_integral, node_assignments, x_vars, nodes, intervals = \
     #             solve_lp_from_edges_and_leaves(

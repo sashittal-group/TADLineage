@@ -1,0 +1,50 @@
+# name: Pluripotency and totipotency regulators (mouse)
+# source: Boyer et al. 2005, Cell 122:947; Chambers & Tomlinson 2009, Development 136:2311;
+#         Macfarlan et al. 2012, Nature 487:57 (2C/totipotency); Hendrickson et al. 2017,
+#         Nat Genet 49:925 (Dux); Ji et al. 2023, Nature 620:1047 (Obox).
+# why: the network that is switched on across these stages; if domain rearrangement tracks
+#      the transcriptional programme, these are the genes it should sit near.
+Pou5f1
+Nanog
+Sox2
+Klf2
+Klf4
+Klf5
+Esrrb
+Sall4
+Tdgf1
+Utf1
+Zfp42
+Dppa2
+Dppa3
+Dppa4
+Dppa5a
+Tbx3
+Prdm14
+Lin28a
+Lin28b
+Fgf4
+Tcl1
+Nr0b1
+Nr5a2
+Zscan4a
+Zscan4b
+Zscan4c
+Zscan4d
+Zscan4e
+Zscan4f
+Tcstv1
+Tcstv3
+Zfp352
+Dux
+Duxf3
+Obox1
+Obox2
+Obox3
+Obox4
+Obox5
+Obox6
+Sp110
+Usp17la
+Usp17lb
+Usp17ld

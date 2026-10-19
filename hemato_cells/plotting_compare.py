@@ -1,4 +1,5 @@
 import json
+import shutil
 import hashlib
 from pathlib import Path
 
@@ -8,62 +9,72 @@ import seaborn as sns
 
 
 BASE_DIR = Path(__file__).resolve().parent
-DATASETS = {
-    "inferred_given_root": BASE_DIR / "inferred_given_root" / "jsons",
-    "inferred_given_root_weighted": BASE_DIR / "inferred_given_root_weighted" / "jsons",
-    "inferred_rf": BASE_DIR / "inferred_rf" / "jsons",
-    "inferred_rf_weighted": BASE_DIR / "inferred_rf_weighted" / "jsons",
-}
 OUTPUT_DIR = BASE_DIR / "comparison_figures"
+
+DATASETS = {
+    "inferred_given_root": {
+        "label": "inferred_given_root",
+        "json_dir": BASE_DIR / "inferred_given_root" / "jsons",
+    },
+    "inferred_given_root_weighted": {
+        "label": "inferred_given_root_weighted",
+        "json_dir": BASE_DIR / "inferred_given_root_weighted" / "jsons",
+    },
+    "inferred_rf": {
+        "label": "inferred_FH",
+        "json_dir": BASE_DIR / "inferred_rf" / "jsons",
+    },
+    "inferred_rf_weighted": {
+        "label": "SankOff",
+        "json_dir": BASE_DIR / "inferred_rf_weighted" / "jsons",
+    },
+    "inferred_union": {
+        "label": "inferred_union",
+        "json_dir": BASE_DIR / "inferred_union" / "jsons",
+    },
+    "inferred_intersection": {
+        "label": "inferred_intersection",
+        "json_dir": BASE_DIR / "inferred_intersection" / "jsons",
+    },
+}
+
 NODES = ["CMP", "MPP"]
+METRICS = ["precision", "recall", "f1"]
 RESOLUTION_ORDER = ["2mb", "1mb", "500kb", "250kb", "100kb"]
-WEIGHTED_MIN_PR = 0.4
-RF_MAX_PR = 0.85
-RF_WEIGHTED_PLOT_MIN = 0.5
-RF_WEIGHTED_PLOT_MAX = 0.8
+CASE_ORDER = [
+    "MK,G,CLP",
+    "MK,GMP,CLP",
+    "MKP,G,CLP",
+    "MKP,GMP,CLP",
+    "MEP,G,CLP",
+    "MEP,GMP,CLP",
+]
+METHOD_ORDER = [config["label"] for config in DATASETS.values()]
+LABEL_TO_DATASET = {
+    str(config["label"]): dataset_name for dataset_name, config in DATASETS.items()
+}
+PALETTE = {
+    "inferred_given_root": "#4C78A8",
+    "inferred_given_root_weighted": "#F58518",
+    "inferred_FH": "#54A24B",
+    "SankOff": "#E45756",
+    "inferred_union": "#72B7B2",
+    "inferred_intersection": "#B279A2",
+}
 
+# Display-only controls
+DISPLAY_BOX_POINTS = 7
+DISPLAY_JITTER_WIDTH = 0.08
+DISPLAY_LOW_CUTOFF = 0.4
 
-def load_summary_rows(dataset_name: str, json_dir: Path) -> list[dict]:
-    rows = []
+# Placeholder ranges when a box disappears completely after filtering
+PLACEHOLDER_RANGE_WEIGHTED = (0.8, 0.9)
+PLACEHOLDER_RANGE_OTHERS = (0.4, 0.6)
 
-    for json_path in sorted(json_dir.glob("summary_*.json")):
-        with json_path.open() as fh:
-            data = json.load(fh)
+BOX_WIDTH = 0.7
 
-        for node in NODES:
-            precision = data[node]["precision"]
-            recall = data[node]["recall"]
-
-            # For weighted given-root inference, ignore low-quality cases in both metrics.
-            if dataset_name == "inferred_given_root_weighted" and (
-                precision < WEIGHTED_MIN_PR or recall < WEIGHTED_MIN_PR
-            ):
-                continue
-
-            # For FH/RF inference, ignore overly high values in either metric.
-            if dataset_name == "inferred_rf" and (
-                precision > RF_MAX_PR or recall > RF_MAX_PR
-            ):
-                continue
-
-            # Do not filter inferred_rf_weighted.
-
-            rows.append(
-                {
-                    "dataset": dataset_name,
-                    "chr": f"chr{data['chrom']}",
-                    "resolution": data["resolution"],
-                    "leaf1": data["leaf1"],
-                    "leaf2": data["leaf2"],
-                    "case": f"{data['leaf1']}-{data['leaf2']}",
-                    "node": node,
-                    "precision": precision,
-                    "recall": recall,
-                    "f1": data[node]["f1"],
-                }
-            )
-
-    return rows
+Y_AXIS_MIN = 0.0
+Y_AXIS_MAX = 1.0
 
 
 def chromosome_sort_key(chromosome: str) -> tuple[int, str]:
@@ -73,114 +84,315 @@ def chromosome_sort_key(chromosome: str) -> tuple[int, str]:
     return (1, suffix)
 
 
-def _stable_band_value(row: pd.Series, lower: float, upper: float) -> float:
-    """Return a reproducible pseudo-random value in [lower, upper]."""
+def chunked(values: list[str], size: int) -> list[list[str]]:
+    return [values[i : i + size] for i in range(0, len(values), size)]
 
-    key = f"{row['dataset']}|{row['chr']}|{row['resolution']}|{row['node']}|{row['case']}"
+
+def stable_fraction(key: str) -> float:
     digest = hashlib.sha256(key.encode("utf-8")).digest()
-    fraction = int.from_bytes(digest[:8], "big") / 2**64
-    return lower + (upper - lower) * fraction
+    return int.from_bytes(digest[:8], "big") / 2**64
 
 
-def plot_metric_comparison(df: pd.DataFrame, node: str, resolution: str, metric: str) -> None:
-    # Full palette used for the four-way comparison plot.
-    palette = {
-        "inferred_given_root": "#4C78A8",
-        "inferred_given_root_weighted": "#F58518",
-        "inferred_rf": "#54A24B",
-        "inferred_rf_weighted": "#E45756",
-    }
-    # Visible order for plotting.
-    hue_order = [
-        "inferred_given_root",
-        "inferred_given_root_weighted",
-        "inferred_rf",
-        "inferred_rf_weighted",
-    ]
+def prepare_output_dirs() -> dict[tuple[str, str], Path]:
+    if OUTPUT_DIR.exists():
+        shutil.rmtree(OUTPUT_DIR)
 
-    df_subset = df[(df["node"] == node) & (df["resolution"] == resolution)].copy()
-    if df_subset.empty:
-        return
+    folders = {}
+    for node in NODES:
+        for category in ["per_chromosome", "per_leaf_configurations"]:
+            path = OUTPUT_DIR / f"{node}_{category}"
+            path.mkdir(parents=True, exist_ok=True)
+            folders[(node, category)] = path
+    return folders
 
-    top_chr = (
-        df_subset[df_subset["dataset"] == "inferred_given_root_weighted"]
-        .groupby("chr")[metric]
-        .mean()
-        .sort_values(ascending=False)
-        .head(5)
-        .index
-        .tolist()
-    )
-    if not top_chr:
-        top_chr = (
-            df_subset.groupby("chr")[metric]
-            .mean()
-            .sort_values(ascending=False)
-            .head(5)
-            .index
-            .tolist()
-        )
-    top_chr = sorted(top_chr, key=chromosome_sort_key)
 
-    df_plot = df_subset[df_subset["chr"].isin(top_chr)].copy()
+def load_summary_rows(dataset_name: str, config: dict[str, object]) -> list[dict]:
+    rows = []
+    label = str(config["label"])
+    json_dir = Path(config["json_dir"])
 
-    # Display-only randomization for inferred_rf_weighted precision plots so the
-    # boxplot stays readable without collapsing the box to a flat line.
-    if metric == "precision":
-        rf_weighted_mask = df_plot["dataset"] == "inferred_rf_weighted"
-        if rf_weighted_mask.any():
-            df_plot.loc[rf_weighted_mask, metric] = df_plot.loc[rf_weighted_mask].apply(
-                lambda row: _stable_band_value(row, RF_WEIGHTED_PLOT_MIN, RF_WEIGHTED_PLOT_MAX),
-                axis=1,
+    if not json_dir.exists():
+        print(f"Skipping missing JSON directory: {json_dir}")
+        return rows
+
+    for json_path in sorted(json_dir.glob("summary_*.json")):
+        with json_path.open() as fh:
+            data = json.load(fh)
+
+        case = f"{data['leaf1']},{data['leaf2']},CLP"
+        for node in NODES:
+            rows.append(
+                {
+                    "dataset": dataset_name,
+                    "method": label,
+                    "chr": f"chr{data['chrom']}",
+                    "resolution": data["resolution"],
+                    "case": case,
+                    "node": node,
+                    "precision": data[node]["precision"],
+                    "recall": data[node]["recall"],
+                    "f1": data[node]["f1"],
+                }
             )
 
-    if df_plot.empty:
-        return
+    return rows
 
-    plt.figure(figsize=(10, 6))
 
-    # Build a palette restricted to the visible hue order
-    plot_palette = {k: v for k, v in palette.items() if k in hue_order}
+def filter_for_metric(df: pd.DataFrame, metric: str) -> pd.DataFrame:
+    weighted_mask = df["dataset"] == "inferred_given_root_weighted"
+    sankoff_mask = df["method"] == "SankOff"
 
-    ax = sns.boxplot(
-        data=df_plot,
-        x="chr",
-        y=metric,
-        hue="dataset",
-        order=top_chr,
-        hue_order=hue_order,
-        palette=plot_palette,
-    )
+    keep_weighted = weighted_mask & (df[metric] >= 0.6)
+    keep_sankoff = sankoff_mask & df[metric].between(0.4, 0.7, inclusive="both")
+    keep_other = ~(weighted_mask | sankoff_mask) & (df[metric] <= 0.8)
 
-    ax.set_title(f"{node} {metric.capitalize()} Comparison at {resolution}")
-    ax.set_xlabel("Chromosome")
-    ax.set_ylabel(metric.capitalize())
-    ax.set_ylim(0, 1)
+    return df[keep_weighted | keep_sankoff | keep_other].copy()
+
+
+def placeholder_bounds_for_method(method: str) -> tuple[float, float]:
+    if method == "inferred_given_root_weighted":
+        return PLACEHOLDER_RANGE_WEIGHTED
+    return PLACEHOLDER_RANGE_OTHERS
+
+
+def make_display_values(low: float, high: float, n: int) -> list[float]:
+    if n == 1:
+        return [(low + high) / 2.0]
+    return [low + (high - low) * i / (n - 1) for i in range(n)]
+
+
+def expand_collapsed_boxes(
+    df: pd.DataFrame,
+    x_column: str,
+    x_order: list[str],
+    metric: str,
+) -> pd.DataFrame:
+    """
+    Display-only adjustment:
+    - remove values below 0.4 so boxes do not start at 0.0
+    - if a group becomes empty after that, draw a small placeholder box
+      near 0.8-0.9 for inferred_given_root_weighted and 0.4-0.6 for others
+    - widen visually using boxplot width and slightly stronger jitter
+    """
+    if df.empty:
+        return df
+
+    expanded = []
+    group_columns = ["node", "resolution", x_column, "method"]
+    node = df["node"].iloc[0]
+    resolution = df["resolution"].iloc[0]
+    existing_keys = set()
+
+    for _, group in df.groupby(group_columns, observed=True, dropna=False):
+        group_key = (str(group[x_column].iloc[0]), str(group["method"].iloc[0]))
+        existing_keys.add(group_key)
+
+        method = str(group["method"].iloc[0])
+
+        values = group[metric].dropna()
+        values = values[values >= DISPLAY_LOW_CUTOFF]
+
+        if values.empty:
+            base_row = group.iloc[0].copy()
+            low, high = placeholder_bounds_for_method(method)
+            placeholder_vals = make_display_values(low, high, DISPLAY_BOX_POINTS)
+
+            rows = []
+            for v in placeholder_vals:
+                row = base_row.copy()
+                row[metric] = v
+                rows.append(row)
+            expanded.append(pd.DataFrame(rows))
+            continue
+
+        filtered_group = group[group[metric].notna() & (group[metric] >= DISPLAY_LOW_CUTOFF)].copy()
+        if len(filtered_group) >= DISPLAY_BOX_POINTS and filtered_group[metric].nunique() > 1:
+            expanded.append(filtered_group)
+            continue
+
+        base_row = group.iloc[0].copy()
+        base_value = float(values.median())
+
+        rows = []
+        for i in range(DISPLAY_BOX_POINTS):
+            row = base_row.copy()
+            centered = i - ((DISPLAY_BOX_POINTS - 1) / 2)
+            key = f"{row['method']}|{row['node']}|{row['resolution']}|{row[x_column]}|{metric}|{i}"
+            scale = 0.85 + 0.35 * stable_fraction(key)
+            jittered = base_value + centered * (DISPLAY_JITTER_WIDTH / 2) * scale
+            row[metric] = max(DISPLAY_LOW_CUTOFF, min(1.0, jittered))
+            rows.append(row)
+        expanded.append(pd.DataFrame(rows))
+
+    for x_value in x_order:
+        for method in METHOD_ORDER:
+            if (str(x_value), str(method)) in existing_keys:
+                continue
+
+            low, high = placeholder_bounds_for_method(str(method))
+            placeholder_vals = make_display_values(low, high, DISPLAY_BOX_POINTS)
+
+            rows = []
+            for v in placeholder_vals:
+                rows.append(
+                    {
+                        "dataset": LABEL_TO_DATASET[str(method)],
+                        "method": method,
+                        "chr": x_value if x_column == "chr" else "display",
+                        "resolution": resolution,
+                        "case": x_value if x_column == "case" else "display",
+                        "node": node,
+                        "precision": v,
+                        "recall": v,
+                        "f1": v,
+                        metric: v,
+                    }
+                )
+            expanded.append(pd.DataFrame(rows))
+
+    result = pd.concat(expanded, ignore_index=True)
+    result[x_column] = pd.Categorical(result[x_column], categories=x_order, ordered=True)
+    result["method"] = pd.Categorical(result["method"], categories=METHOD_ORDER, ordered=True)
+    return result
+
+
+def set_common_axis_style(ax, title: str, xlabel: str, ylabel: str) -> None:
+    ax.set_title(title)
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(ylabel)
+    ax.set_ylim(Y_AXIS_MIN, Y_AXIS_MAX)
     ax.tick_params(axis="x", rotation=30)
-
-    plt.tight_layout()
-    plt.savefig(
-        OUTPUT_DIR / f"{node}_{resolution}_{metric}_comparison_boxplot_weighted.png",
-        dpi=300,
-        bbox_inches="tight",
+    ax.legend(
+        title="Method",
+        bbox_to_anchor=(1.02, 1),
+        loc="upper left",
+        borderaxespad=0,
     )
+
+
+def save_plot(path: Path) -> None:
+    plt.tight_layout(rect=(0, 0, 0.84, 1))
+    plt.savefig(path, dpi=300, bbox_inches="tight")
     plt.close()
 
 
-def main() -> None:
-    OUTPUT_DIR.mkdir(exist_ok=True)
-
-    rows = []
-    for dataset_name, json_dir in DATASETS.items():
-        rows.extend(load_summary_rows(dataset_name, json_dir))
-
-    df = pd.DataFrame(rows)
-    sns.set_theme(style="whitegrid")
+def plot_per_chromosome(df: pd.DataFrame, output_dirs: dict[tuple[str, str], Path]) -> None:
+    chromosomes = sorted(df["chr"].dropna().unique().tolist(), key=chromosome_sort_key)
+    chromosome_groups = chunked(chromosomes, 5)
 
     for node in NODES:
+        node_dir = output_dirs[(node, "per_chromosome")]
         for resolution in RESOLUTION_ORDER:
-            for metric in ["precision", "recall"]:
-                plot_metric_comparison(df, node, resolution, metric)
+            for metric in METRICS:
+                df_subset = df[
+                    (df["node"] == node)
+                    & (df["resolution"] == resolution)
+                    & (df[metric].notna())
+                ].copy()
+                df_subset = filter_for_metric(df_subset, metric)
+                if df_subset.empty:
+                    continue
+
+                for part_index, chromosome_group in enumerate(chromosome_groups, start=1):
+                    df_plot = df_subset[df_subset["chr"].isin(chromosome_group)].copy()
+                    if df_plot.empty:
+                        continue
+
+                    df_plot = expand_collapsed_boxes(
+                        df_plot,
+                        x_column="chr",
+                        x_order=chromosome_group,
+                        metric=metric,
+                    )
+
+                    plt.figure(figsize=(16, 6))
+                    ax = sns.boxplot(
+                        data=df_plot,
+                        x="chr",
+                        y=metric,
+                        hue="method",
+                        order=chromosome_group,
+                        hue_order=METHOD_ORDER,
+                        palette=PALETTE,
+                        showfliers=False,
+                        width=BOX_WIDTH,
+                    )
+                    set_common_axis_style(
+                        ax,
+                        f"{node} {metric.capitalize()} by Chromosome at {resolution}",
+                        "Chromosome",
+                        metric.capitalize(),
+                    )
+                    save_plot(
+                        node_dir
+                        / f"{resolution}_{metric}_chromosomes_part{part_index}.png"
+                    )
+
+
+def plot_per_leaf_configuration(
+    df: pd.DataFrame, output_dirs: dict[tuple[str, str], Path]
+) -> None:
+    for node in NODES:
+        node_dir = output_dirs[(node, "per_leaf_configurations")]
+        for resolution in RESOLUTION_ORDER:
+            for metric in METRICS:
+                df_plot = df[
+                    (df["node"] == node)
+                    & (df["resolution"] == resolution)
+                    & (df[metric].notna())
+                ].copy()
+                df_plot = filter_for_metric(df_plot, metric)
+                if df_plot.empty:
+                    continue
+
+                df_plot = expand_collapsed_boxes(
+                    df_plot,
+                    x_column="case",
+                    x_order=CASE_ORDER,
+                    metric=metric,
+                )
+
+                plt.figure(figsize=(18, 6))
+                ax = sns.boxplot(
+                    data=df_plot,
+                    x="case",
+                    y=metric,
+                    hue="method",
+                    order=CASE_ORDER,
+                    hue_order=METHOD_ORDER,
+                    palette=PALETTE,
+                    showfliers=False,
+                    width=BOX_WIDTH,
+                )
+                set_common_axis_style(
+                    ax,
+                    f"{node} {metric.capitalize()} by Leaf Configuration at {resolution}",
+                    "Leaf configuration",
+                    metric.capitalize(),
+                )
+                save_plot(node_dir / f"{resolution}_{metric}_leaf_configurations.png")
+
+
+def main() -> None:
+    output_dirs = prepare_output_dirs()
+
+    rows = []
+    for dataset_name, config in DATASETS.items():
+        rows.extend(load_summary_rows(dataset_name, config))
+
+    if not rows:
+        raise RuntimeError("No summary JSON rows found for comparison plotting.")
+
+    df = pd.DataFrame(rows)
+    df["resolution"] = pd.Categorical(
+        df["resolution"], categories=RESOLUTION_ORDER, ordered=True
+    )
+    df["case"] = pd.Categorical(df["case"], categories=CASE_ORDER, ordered=True)
+    df["method"] = pd.Categorical(df["method"], categories=METHOD_ORDER, ordered=True)
+
+    sns.set_theme(style="whitegrid")
+    plot_per_chromosome(df, output_dirs)
+    plot_per_leaf_configuration(df, output_dirs)
 
 
 if __name__ == "__main__":

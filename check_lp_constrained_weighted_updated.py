@@ -17,9 +17,11 @@ def solve_lp_from_edges_and_leaves(
     use_fitch_hartigan=False,
     verbose=False,
     impute=False,
+    impute_cost=0.0,              # NEW: price per imputed interval (impute=True only)
     root_intervals=None,
     ground_truth_intervals=None,
     leaf_importance_weight=1.0,   # NEW: weight for leaf importance mismatch term
+    candidate_intervals=None,     # NEW: restrict the candidate universe
 ):
     """
     Solve the LP for a given tree and leaf interval assignments.
@@ -54,6 +56,30 @@ def solve_lp_from_edges_and_leaves(
         Print diagnostic info if True.
     impute : bool
         If True, allow missing intervals at fixed nodes to be imputed.
+    impute_cost : float or dict
+        Price charged per interval a fixed node gains that it did not observe.
+        Read ONLY when ``impute=True``; the default 0.0 leaves the model exactly
+        as it was, so every non-imputation caller is unaffected.
+
+        A price is needed because the objective charges only for *differences*
+        along edges: putting the same interval on a parent and on all of its
+        children costs zero, so free imputation is degenerate and floods every
+        leaf. Pricing it makes a leaf gain an interval only when the parsimony
+        saving on its parent edge outweighs the price.
+
+        As a **float** it is a flat sibling-support threshold: for a parent with
+        ``k`` leaf children, ``j`` of which observed interval I and
+        ``m = k - j`` of which missed it, the solver imputes iff
+        ``m / j < (Ct + 2*Cb) / impute_cost``. With ``Ct = Cb = 1``,
+        ``impute_cost=3`` needs a strict majority of siblings, ``1.5`` needs
+        >= 1/3 (recall-leaning), ``6`` needs >= 2/3 (precision-leaning).
+
+        As a **dict** it maps ``(node, (a, b)) -> price``, which is what the
+        RobusTAD scores buy: the *receiving* leaf's own per-bin boundary scores
+        at ``a`` and ``b`` can discount its price, so the support a leaf demands
+        from its relatives drops exactly where its own (too weak to call) data
+        already hints at a boundary. Pairs absent from the dict fall back to
+        ``impute_cost.get(None, 0.0)``.
     root_intervals : iterable[str] or None
         If given, fix the root intervals exactly the same way as leaf intervals.
     ground_truth_intervals : dict or None
@@ -62,6 +88,17 @@ def solve_lp_from_edges_and_leaves(
         hard-coded to 1 in the leaf-importance term.
     leaf_importance_weight : float
         Weight on the leaf-importance mismatch term.
+    candidate_intervals : iterable[tuple[int,int]] or None
+        If given, use exactly these ``(a, b)`` pairs as the candidate universe
+        instead of every ``(start, end)`` pair over the observed boundaries.
+        Observed intervals are unioned in regardless, so a fixed node can always
+        be pinned to what it actually has. ``None`` (the default) keeps the
+        original all-pairs enumeration, so existing callers are unaffected.
+
+        Only useful with ``impute=True``, where the all-pairs universe grows as
+        (endpoint union)^2 and dominates the model size; an interval no node
+        observed can only ever cost the objective. Ignored under
+        ``use_fitch_hartigan=True``.
     max_cut_rounds : int
         Maximum rounds of laminarity cuts.
 
@@ -272,6 +309,24 @@ def solve_lp_from_edges_and_leaves(
             ]
         interval_universe = sorted(set().union(*node_intervals.values())) if node_intervals else []
         intervals = interval_universe
+    elif candidate_intervals is not None:
+        # Restricted universe. Union in every observed interval unconditionally:
+        # a fixed node whose interval is not a candidate could not be pinned to
+        # it below, and would silently LOSE a call it actually made.
+        observed = set()
+        for v in leaf_intervals:
+            observed |= {parse_interval(s) for s in leaf_intervals[v]}
+        if root is not None and root_intervals is not None:
+            observed |= {parse_interval(s) for s in root_intervals}
+        intervals = sorted(
+            {(int(a), int(b)) for (a, b) in candidate_intervals if a < b} | observed
+        )
+        node_intervals = {v: intervals for v in nodes}
+        # Positions follow the restricted universe, so no dead s/e variables.
+        start_positions = sorted({a for (a, _) in intervals})
+        end_positions = sorted({b for (_, b) in intervals}, reverse=True)
+        node_start_sets = {v: set(start_positions) for v in nodes}
+        node_end_sets = {v: set(end_positions) for v in nodes}
     else:
         intervals = []
         for a in start_positions:
@@ -343,13 +398,20 @@ def solve_lp_from_edges_and_leaves(
     if root is not None and root_intervals is not None:
         fixed_nodes[root] = root_interval_set
 
+    # Intervals a fixed node is pinned to (observed) vs. free to gain (imputable).
+    # Both stay empty unless impute=True, so the non-imputation model is untouched.
+    forced_present = set()
+    imputable = []
     for v in fixed_nodes:
         present = {parse_interval(interval_str) for interval_str in fixed_nodes[v]}
         for (a, b) in node_intervals[v]:
             if (a, b) in present:
                 m.addConstr(x[v, a, b] == 1)
+                forced_present.add((v, (a, b)))
             elif not impute:
                 m.addConstr(x[v, a, b] == 0)
+            else:
+                imputable.append((v, (a, b)))
 
     # Interval ↔ boundary constraints
     for v in nodes:
@@ -451,6 +513,20 @@ def solve_lp_from_edges_and_leaves(
     else:
         raise ValueError("Unknown mode. Use 'convex'|'lex_boundary_first'|'lex_tad_first'.")
 
+    # Price of imputation. Inert unless impute=True (imputable is empty otherwise)
+    # AND a non-zero impute_cost was given, so existing callers are unaffected.
+    if impute and imputable and impute_cost:
+        if isinstance(impute_cost, dict):
+            fallback = float(impute_cost.get(None, 0.0))
+            obj = obj + gp.quicksum(
+                float(impute_cost.get((v, (a, b)), fallback)) * x[v, a, b]
+                for (v, (a, b)) in imputable
+            )
+        else:
+            obj = obj + float(impute_cost) * gp.quicksum(
+                x[v, a, b] for (v, (a, b)) in imputable
+            )
+
     m.setObjective(obj, GRB.MINIMIZE)
 
     def build_assignments_from_solution():
@@ -464,7 +540,11 @@ def solve_lp_from_edges_and_leaves(
     def find_laminarity_violations(assignments):
         violations = []
         for v in nodes:
-            if v in leaf_intervals:
+            # Leaves are skipped: their sets are the caller's own output and
+            # cannot be cut. Under impute they CAN gain intervals, so they are
+            # checked -- but never cut between two OBSERVED intervals, which the
+            # == 1 constraints above would make infeasible.
+            if v in leaf_intervals and not impute:
                 continue
             intervals_list = sorted(assignments[v])
             for i in range(len(intervals_list)):
@@ -472,6 +552,9 @@ def solve_lp_from_edges_and_leaves(
                 for j in range(i + 1, len(intervals_list)):
                     c, d = intervals_list[j]
                     if (a < c < b < d) or (c < a < d < b):
+                        if (impute and (v, (a, b)) in forced_present
+                                and (v, (c, d)) in forced_present):
+                            continue
                         violations.append((v, (a, b), (c, d)))
         return violations
 

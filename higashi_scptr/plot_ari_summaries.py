@@ -7,7 +7,9 @@ import matplotlib.pyplot as plt
 
 
 RESULTS_DIR = Path(__file__).resolve().parent / "results"
-RESOLUTIONS = ["500000", "1000000"]
+RESOLUTIONS = ["250000", "500000", "1000000"]
+CHROMOSOMES = [f"chr{i}" for i in range(1, 20)] + ["chrX"]
+ALL_CHROMOSOME = "all"
 RESULT_SPECS = {
     "cluster": {
         "filename": "cluster_results.txt",
@@ -23,6 +25,8 @@ RESULT_SPECS = {
 
 
 def chrom_key(chromosome):
+    if chromosome == ALL_CHROMOSOME:
+        return 25
     label = chromosome.replace("chr", "")
     if label == "X":
         return 23
@@ -51,7 +55,9 @@ def collect_rows():
     rows = []
     for resolution in RESOLUTIONS:
         resolution_dir = RESULTS_DIR / resolution
-        for chrom_dir in sorted(resolution_dir.glob("chr*"), key=lambda p: chrom_key(p.name)):
+        chromosomes = CHROMOSOMES + [ALL_CHROMOSOME]
+        for chromosome in chromosomes:
+            chrom_dir = resolution_dir / chromosome
             if not chrom_dir.is_dir():
                 continue
             for kind, spec in RESULT_SPECS.items():
@@ -114,6 +120,42 @@ def plot_by_resolution(rows, kind, spec, fig_dir):
     plt.close(fig)
 
 
+def plot_all_chromosomes_by_resolution(rows, kind, spec, fig_dir):
+    by_resolution = []
+    for resolution in RESOLUTIONS:
+        values = [
+            row["ari"]
+            for row in rows
+            if row["kind"] == kind
+            and row["resolution"] == resolution
+            and row["chromosome"] == ALL_CHROMOSOME
+        ]
+        if values:
+            by_resolution.append((resolution, values[0]))
+
+    if not by_resolution:
+        return
+
+    fig, ax = plt.subplots(figsize=(6, 4), constrained_layout=True)
+    x_values = [item[0] for item in by_resolution]
+    y_values = [item[1] for item in by_resolution]
+    ax.scatter(x_values, y_values, s=90, color=spec["color"], zorder=3)
+    ax.set_title(f"{spec['title']} by Resolution Higashi, All Chromosomes")
+    ax.set_xlabel("Resolution")
+    ax.set_ylabel("ARI")
+    ax.set_ylim(0, max(0.01, max(y_values) * 1.20))
+    for x_value, y_value in by_resolution:
+        ax.annotate(
+            f"{y_value:.3f}",
+            (x_value, y_value),
+            textcoords="offset points",
+            xytext=(0, 8),
+            ha="center",
+        )
+    fig.savefig(fig_dir / f"{kind}_ari_by_res_all_chr.png", dpi=300)
+    plt.close(fig)
+
+
 def plot_by_chromosome(rows, kind, spec, fig_dir):
     chromosomes = sorted(
         {row["chromosome"] for row in rows if row["kind"] == kind}, key=chrom_key
@@ -163,6 +205,7 @@ def main():
     for kind, spec in RESULT_SPECS.items():
         plot_by_resolution(rows, kind, spec, fig_dir)
         plot_by_chromosome(rows, kind, spec, fig_dir)
+        plot_all_chromosomes_by_resolution(rows, kind, spec, fig_dir)
 
     print(f"Wrote {summary_path}")
     for path in sorted(fig_dir.glob("*.png")):

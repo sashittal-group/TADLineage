@@ -1,0 +1,26 @@
+# name: X-inactivation escapees and the X-inactivation centre (mouse)
+# source: Berletch, Yang, Xu, Carrel & Disteche 2011, Hum Genet 130:237 and Berletch et al.
+#         2015, PLoS Genet 11:e1005079 (escape in mouse tissues); Borensztein et al. 2017,
+#         Nat Struct Mol Biol 24:226 (escape during preimplantation imprinted XCI).
+# why: Collombet et al. 2020 report that TADs on the paternal X are lost as its genes are
+#      silenced but persist over regions that escape inactivation, so domains that survive
+#      the 8-cell to 64-cell transition on chrX are predicted to sit over these genes.
+Xist
+Tsix
+Jpx
+Ftx
+Kdm6a
+Kdm5c
+Ddx3x
+Eif2s3x
+Utp14a
+Mecp2
+Huwe1
+5530601H04Rik
+Pbdc1
+Car5b
+Shroom4
+Ogt
+Bgn
+Rbbp7
+Med14

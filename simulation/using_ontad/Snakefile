@@ -1,0 +1,95 @@
+# OnTAD-caller analysis.
+#
+# Reads the shared simulated matrices produced by ../Snakefile and calls OnTAD
+# on every node of every region, writing the calls next to the matrices in the
+# shared data tree (../data/region_XXX/ontad/). Also runs the generation/OnTAD
+# QC report and the OnTAD call-count gate.
+#
+# Prereq: run `snakemake` in the parent simulation/ directory first so the
+# matrices and hidden truth exist.
+#
+# Usage (from this directory):
+#   snakemake --cores 8
+# Then reconstruct + plot with Snakefile_methods.
+
+N_INSTANCES = 100
+NODES = ["root", "A", "B", "C", "D", "E", "F", "G"]
+PYTHON = "/Library/Frameworks/Python.framework/Versions/3.12/bin/python3.12"
+DATA_DIR = "../data"                       # shared generation output
+ONTAD_BIN = "../../OnTAD/OnTAD/src/OnTAD"
+ONTAD_PENALTY = 0.1
+ONTAD_MAXSZ = 200
+ONTAD_MINSZ = 3
+ONTAD_LSIZE = 5
+ONTAD_LDIFF = 0.5
+ONTAD_TIMEOUT = 300
+MIN_CALLED_TADS = 20
+
+
+wildcard_constraints:
+    idx=r"\d+"
+
+
+rule all:
+    input:
+        expand(
+            DATA_DIR + "/region_{idx:03d}/ontad/{node}.tad",
+            idx=range(N_INSTANCES),
+            node=NODES,
+        ),
+        DATA_DIR + "/ontad_count_check.txt",
+        DATA_DIR + "/generation_report.txt"
+
+
+rule call_ontad:
+    input:
+        matrix=DATA_DIR + "/region_{idx}/matrices/{node}.matrix"
+    output:
+        tad=DATA_DIR + "/region_{idx}/ontad/{node}.tad"
+    log:
+        "logs/ontad/region_{idx}_{node}.log"
+    shell:
+        "{PYTHON} run_ontad.py --outdir {DATA_DIR} "
+        "--ontad-bin {ONTAD_BIN} "
+        "--region-index {wildcards.idx} "
+        "--node {wildcards.node} "
+        "--penalty {ONTAD_PENALTY} "
+        "--maxsz {ONTAD_MAXSZ} "
+        "--minsz {ONTAD_MINSZ} "
+        "--lsize {ONTAD_LSIZE} "
+        "--ldiff {ONTAD_LDIFF} "
+        "--log2 "
+        "--timeout {ONTAD_TIMEOUT} "
+        "> {log} 2>&1"
+
+
+rule check_ontad_counts:
+    input:
+        expand(
+            DATA_DIR + "/region_{idx:03d}/ontad/{node}.tad",
+            idx=range(N_INSTANCES),
+            node=NODES,
+        )
+    output:
+        DATA_DIR + "/ontad_count_check.txt"
+    shell:
+        "{PYTHON} check_ontad_counts.py --outdir {DATA_DIR} "
+        "--min-tads {MIN_CALLED_TADS} > {output}"
+
+
+rule summarize:
+    input:
+        expand(
+            DATA_DIR + "/region_{idx:03d}/truth/{node}.json",
+            idx=range(N_INSTANCES),
+            node=NODES,
+        ),
+        expand(
+            DATA_DIR + "/region_{idx:03d}/ontad/{node}.tad",
+            idx=range(N_INSTANCES),
+            node=NODES,
+        )
+    output:
+        DATA_DIR + "/generation_report.txt"
+    shell:
+        "{PYTHON} check_generation.py --outdir {DATA_DIR} > {output}"

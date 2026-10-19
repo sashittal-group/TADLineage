@@ -1,0 +1,29 @@
+# name: First lineage segregation: trophectoderm and inner cell mass (mouse)
+# source: Strumpf et al. 2005, Development 132:2093 (Cdx2); Ralston & Rossant 2008,
+#         Dev Biol 313:614 (Tead4/Gata3); Chazaud et al. 2006, Dev Cell 10:615 (Gata6/Nanog);
+#         Frum & Ralston 2015, Trends Genet 31:402 (review).
+# why: the 8-cell to 64-cell transition is where the blastocyst lineages are set apart, so
+#      this is the set with a specific prediction about which transition it should mark.
+Cdx2
+Gata3
+Tead4
+Krt8
+Krt18
+Elf5
+Eomes
+Hand1
+Tfap2c
+Gata2
+Sox17
+Gata4
+Gata6
+Pdgfra
+Sox7
+Foxa2
+Lrp2
+Dab2
+Nanog
+Pou5f1
+Sox2
+Klf17
+Id2

@@ -1,0 +1,21 @@
+"""
+Large parsimony on the hematopoietic quartet -- OnTAD calls, unweighted.
+
+Leaves: hemato_cells/<NODE>/chr<C>/<RES>/tads.tad (OnTAD), plain parsimony.
+Counterpart of the small parsimony pipeline hemato_cells/check_intermediate_snakemake_given_root.
+Rules: ../quartet_rules.smk. Run from this folder:
+
+    nohup caffeinate -is /Users/PSLabMonisha/miniforge3/envs/snakemake-tutorial/bin/snakemake \
+        --cores 8 -p --rerun-incomplete --keep-going > snakemake_run.log 2>&1 &
+"""
+
+DATA_DIR = "../.."          # hemato_cells
+WEIGHTING = "none"
+
+
+rule all:
+    input:
+        "results/best_tolerance/best_tolerance_summary.txt",
+
+
+include: "../quartet_rules.smk"

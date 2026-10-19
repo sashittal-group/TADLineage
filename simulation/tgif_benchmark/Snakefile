@@ -1,0 +1,217 @@
+# Benchmark TGIF-DB (Roy lab) against the tree-informed imputation arm.
+#
+# TGIF-DB solves the same problem as ../tree_informed_tad_inference_robustad --
+# use a tree of related samples to get better per-leaf boundaries out of noisy
+# Hi-C -- by the opposite mechanism: tree-regularized multi-task NMF over all
+# the leaves at once, instead of independent calls repaired afterwards by an
+# ILP. This workflow replays that arm's simulation exactly, hands the identical
+# degraded leaf matrices to TGIF-DB, and scores both at the boundary level.
+#
+# BEFORE THE FIRST RUN:
+#   ./build_tgif.sh          clones, patches and compiles tgif-db (see the
+#                            script for the two macOS/clang fixes it applies)
+#
+# Then, from this directory:
+#   /Users/PSLabMonisha/miniforge3/envs/snakemake-tutorial/bin/snakemake --cores 4 -p
+#
+# One region end to end:
+#   snakemake --cores 2 results/tree00/region_000.json
+#
+# Both stages run in snakemake-tutorial: TGIF links the GSL that lives in that
+# env, and the SCORE stage needs gurobipy. That is a happy accident -- unlike
+# the RobusTAD arm, this pipeline needs only one interpreter.
+#
+# CALL is the expensive half: TGIF is ~40 s per (region, depth) at full depth,
+# so ~4 min per region over the 6-rung ladder. SCORE re-solves the arm's ILP
+# from ITS cache and takes a couple of seconds. Retuning the scoring therefore
+# only re-runs SCORE:
+#   snakemake --cores 8 --forcerun score plot
+
+# --- Replication ------------------------------------------------------------
+# IDENTICAL to the RobusTAD arm's grid, and it has to be. This figure is meant
+# to be shown next to the arm's plots/f1_vs_noise.png, so the two curves must be
+# means over the SAME 200 (tree, region) pairs -- not merely over the same
+# simulation settings. A smaller grid here would be a different sample of
+# regions and the two plots would not be commensurable, even though every
+# generation parameter below matches.
+#
+# Cost: TGIF is ~4-5 min per region over the 6-rung ladder at TGIF_THRESHOLD = 0,
+# so the full 200 is ~4 h at --cores 4. Calls are cached, so re-plotting and
+# re-scoring are free afterwards.
+N_TREES = 10
+TREES = [f"tree{i:02d}" for i in range(N_TREES)]
+N_REGIONS = 20
+REGIONS = list(range(N_REGIONS))
+
+# --- Simulation -------------------------------------------------------------
+# Every value here is copied from the RobusTAD arm's Snakefile and must stay
+# equal to it. The leaf matrices TGIF sees are only the same matrices RobusTAD
+# saw if the simulation parameters and the seed agree exactly.
+N_NODES = 16                   # -> 10 leaves
+TREE_SEED = 20240101
+N_BINS = 500
+N_TOP_TADS = 10
+NESTING_DEPTH = 2
+MIN_SIZE = 8
+MIN_SCORE_NODE_TADS = 6
+EVENTS_PER_EDGE = 1
+TOLERANCE = 2
+AMPLITUDE = 7.8
+
+# --- TGIF -------------------------------------------------------------------
+# WINDOW_BINS: TGIF hard-floors the factorization window at 100 bins and the
+# stride at half of it, so anything smaller is silently overridden. 100 bins is
+# 2x the mean top-level TAD (500 bins / 10 domains) here.
+WINDOW_BINS = 100
+# TGIF_THRESHOLD: its sparsity filter drops a bin, in EVERY task, if fewer than
+# this fraction of the bin's within-window neighbours are non-zero in ANY ONE
+# task.
+#
+# 0 -- THE FILTER OFF -- IS THE ONLY DEFENSIBLE SETTING HERE, and this is the
+# single most important thing measured while adapting TGIF. Its own default is
+# 0.5 (tuned for deep real Hi-C) and its README suggests 0.2 for sparse input;
+# on these count-poor synthetic matrices BOTH cripple it. Measured on
+# tree01/region_000, boundary F1 at 1.0x:
+#
+#     -t 0.2  ->  TGIF calls 10 boundaries over 10 leaves, half the region N/A,
+#                 and REFUSES TO RUN AT ALL at every noisier rung
+#     -t 0    ->  full coverage at every rung, F1 0.691 at 1.0x against
+#                 RobusTAD's 0.761, and 0.48-0.55 at the noisy end
+#
+# Benchmarking at 0.2 would have reported a baseline that mostly declined to
+# compete. The cost is runtime: ~50 s per (region, depth) instead of ~5 s.
+TGIF_THRESHOLD = 0
+# TGIF_ALPHA: tree-regularization strength -- TGIF's analogue of our impute_cost,
+# the knob that says how much the tree is allowed to matter. This is TGIF's own
+# default, and the pilot says to leave it there.
+#
+# It is worth recording HOW that was nearly got wrong, because it is a trap
+# anyone re-tuning this will walk into. Swept at the old TGIF_THRESHOLD = 0.2,
+# alpha looked flat at 0.222-0.224 over 1e3/1e5/1e6 and then jumped to 0.299 at
+# 1e8 -- an apparently clear +0.08 win for a stronger tree prior. Re-swept with
+# the filter OFF, the ordering REVERSES: 1e6 scores 0.727 and 1e8 scores 0.691.
+# The "win" was an artifact of tuning inside a configuration where TGIF was
+# barely running. Tune the threshold first, then alpha, never the reverse.
+# (alpha is stored in an int inside TGIF, so it cannot exceed ~2e9.)
+TGIF_ALPHA = 1000000
+TGIF_RANDOM_STATE = 1010
+
+# --- Our methods (must match the arm's headline settings) -------------------
+ARM = "../tree_informed_tad_inference_robustad"
+METHODS = "snap,wsnap"
+IMPUTE_COST = 0.5
+IMPORTANCE_WEIGHT = 0.1
+PRICE_DISCOUNT = 0.6
+PRICE_FLOOR = 0.25
+
+# --- Interpreter ------------------------------------------------------------
+PYTHON = "/Users/PSLabMonisha/miniforge3/envs/snakemake-tutorial/bin/python"
+GSL_LIB = "/Users/PSLabMonisha/miniforge3/envs/snakemake-tutorial/lib"
+
+CALLS = "calls"
+RESULTS = "results"
+PLOTS = "plots"
+
+COMMON = (
+    f"--n-nodes {N_NODES} --tree-seed {TREE_SEED} "
+    f"--tolerance {TOLERANCE} --amplitude {AMPLITUDE} "
+    f"--n-bins {N_BINS} --n-top-tads {N_TOP_TADS} --nesting-depth {NESTING_DEPTH} "
+    f"--min-size {MIN_SIZE} --min-score-node-tads {MIN_SCORE_NODE_TADS} "
+    f"--events-per-edge {EVENTS_PER_EDGE}"
+)
+
+
+wildcard_constraints:
+    idx=r"\d+",
+    tree=r"tree\d+"
+
+
+rule all:
+    input:
+        expand(RESULTS + "/{tree}/region_{idx:03d}.json", tree=TREES, idx=REGIONS),
+        PLOTS + "/f1_vs_noise.png",
+        PLOTS + "/f1_vs_noise_masked.png",
+        PLOTS + "/precision_recall.png",
+        PLOTS + "/tgif_coverage.png",
+        PLOTS + "/leaf_metrics_long.csv",
+        PLOTS + "/leaf_metrics_summary.csv"
+
+
+rule call_tgif:
+    output:
+        CALLS + "/{tree}/region_{idx}.json"
+    log:
+        "logs/call_{tree}_region_{idx}.log"
+    shell:
+        "{PYTHON} run_tgif_bench.py --tree {wildcards.tree} "
+        "--region-index {wildcards.idx} --stage call "
+        "--outdir {CALLS}/{wildcards.tree} "
+        "--window-bins {WINDOW_BINS} --tgif-threshold {TGIF_THRESHOLD} "
+        "--tgif-alpha {TGIF_ALPHA} --tgif-random-state {TGIF_RANDOM_STATE} "
+        "--gsl-lib {GSL_LIB} "
+        + COMMON + " > {log} 2>&1"
+
+
+rule score:
+    input:
+        tgif=CALLS + "/{tree}/region_{idx}.json"
+    output:
+        RESULTS + "/{tree}/region_{idx}.json"
+    log:
+        "logs/score_{tree}_region_{idx}.log"
+    shell:
+        "{PYTHON} run_tgif_bench.py --tree {wildcards.tree} "
+        "--region-index {wildcards.idx} --stage score "
+        "--tgif-json {input.tgif} "
+        "--arm-calls-json {ARM}/calls/{wildcards.tree}/region_{wildcards.idx}.json "
+        "--methods {METHODS} --impute-cost {IMPUTE_COST} "
+        "--importance-weight {IMPORTANCE_WEIGHT} "
+        "--price-discount {PRICE_DISCOUNT} --price-floor {PRICE_FLOOR} "
+        "--outdir {RESULTS}/{wildcards.tree} "
+        + COMMON + " > {log} 2>&1"
+
+
+# The headline figure is the SAME figure as the arm's plots/f1_vs_noise.png --
+# same name, same layout, same styling, same +/-1 SD ribbon -- with TGIF-DB
+# added as one more line, so the two can sit side by side without the reader
+# re-learning the axes.
+#
+# The metric is the one thing that changes, and it had to: the arm scores F1 over
+# recovered TAD INTERVALS, and TGIF emits per-bin boundary calls that never
+# assemble into intervals. So everything here is scored on BOUNDARIES RECOVERED
+# from the noisy Hi-C -- an interval (a,b) contributes its two interface
+# positions {a-1, b}, matched one-to-one within +/- TOLERANCE. Every method on
+# the figure is scored that same way; interval-level F1 survives in the CSVs as
+# f1_interval for the methods that have intervals.
+#
+# BAND is what the ribbon shows: "sd" = spread across regions (the arm's
+# default), "sem" = uncertainty in the mean.
+BAND = "sd"
+
+# Which methods are DRAWN. Everything is still scored and still written to the
+# CSVs; this only controls the figures.
+#
+# "tgif" alone is the default because this figure is meant to be shown ALONGSIDE
+# the arm's own f1_vs_noise.png, not instead of it -- so it contributes the one
+# line the arm cannot produce, on identical axes over the identical 200 regions,
+# and the RobusTAD/snap/wsnap lines come from the arm's own figure rather than
+# being drawn twice. Set PLOT_METHODS = "all" to draw every method here instead
+# (useful for checking the comparison in one place before splitting it).
+PLOT_METHODS = "tgif"
+
+
+rule plot:
+    input:
+        expand(RESULTS + "/{tree}/region_{idx:03d}.json", tree=TREES, idx=REGIONS)
+    output:
+        headline=PLOTS + "/f1_vs_noise.png",
+        masked=PLOTS + "/f1_vs_noise_masked.png",
+        pr=PLOTS + "/precision_recall.png",
+        coverage=PLOTS + "/tgif_coverage.png",
+        long_csv=PLOTS + "/leaf_metrics_long.csv",
+        summary_csv=PLOTS + "/leaf_metrics_summary.csv"
+    log:
+        "logs/plot.log"
+    shell:
+        "{PYTHON} plot_tgif_bench.py --results-dir {RESULTS} --outdir {PLOTS} "
+        "--band {BAND} --plot-methods {PLOT_METHODS} > {log} 2>&1"

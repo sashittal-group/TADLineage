@@ -86,8 +86,10 @@ TOLERANCES = 0, 1, 2, 3, 4, 5
 RESOLUTIONS = 1000kb
 ```
 
-For `500kb`, selection is done stage by stage, so every stage gets a share of
-the boundary budget. For other resolutions, selection is done globally.
+For `250kb`, the Snakefile can force a fixed number of files per stage with
+`PER_STAGE_BY_RESOLUTION`. For `500kb`, selection is done stage by stage so
+every stage gets a share of the boundary budget. Other per-chromosome
+resolutions use the global boundary budget unless `--per-stage` is passed.
 
 ### 3. Harmonize Nearby Boundaries
 
@@ -270,3 +272,57 @@ In plain words, this folder asks:
 
 The answer is measured with ARI/NMI against the known stage labels, and with the
 MST/tree-distance score against the expected developmental order.
+
+## Alluvial (Sankey) view of the clustering
+
+`plot_cluster_sankey.py` draws the cells flowing from their known developmental stage
+into the clusters the median clustering returned, which shows *how* a clustering fails
+rather than only how much. The drawing lives in `cluster_sankey.py` at the repository
+root and is shared with `schiccluster_scptr/` and `higashi_scptr/`.
+
+```bash
+python plot_cluster_sankey.py --resolution 500kb --tolerance 1
+python plot_cluster_sankey.py --all      # every resolution, chromosome and tolerance
+```
+
+A run clusters a subsample of the cells of each stage. By default the panel scales each
+stage up to `available_counts_by_stage`, replicating the clustered cells in the
+proportions the run produced, so the panel shows the dataset at full size; this is the
+convention `plot_median_chain.py` already follows for the MDS panel. The scaling is exact
+within a stage but changes the mix of stages, so the ARI, the NMI and the matched-diagonal
+fraction printed on the panel are always computed on the cells that were actually
+clustered, never on the scaled drawing. Pass `--no-scale` to draw only the clustered
+cells, and `--show-label-note` to print how many cells were clustered and how many had
+their stage label used by the preimputation step.
+
+- `results_updated/scptr_runs_all_cells/{resolution}/{chrom}/tol_{t}_sankey.png`
+
+## Merge and split events, and the biology on them
+
+`merge_split_real_biology/` takes the cluster medians produced here and asks what changes
+between the stages: which domains split, which merged, and whether the genes at those
+boundaries do anything at the same transition. It runs the same
+`tad_sequence.transform_sequence` that `hemato_cells/analyze_edge_merge_split_events.py`
+runs along the hematopoietic tree, so the event definitions match between the two, and it
+annotates the results against mm10 genes, the Deng et al. 2014 expression atlas, ENCODE
+CTCF peaks and curated sets for imprinting, X-inactivation escape, the Hox clusters and
+the pluripotency network.
+
+Read `merge_split_real_biology/results/REPORT.md` before using any of it. The events are
+mostly not reproducible across bin sizes, the boundaries they define are depleted of genes
+and CTCF rather than enriched, and no transition-specific transcriptional signal survives
+the multiplicity correction. The pipeline and the negative controls are the deliverable;
+the locus list is a shortlist of candidates.
+
+The obvious objection -- that sparse single-cell contacts jitter the boundary positions and
+a one-bin window therefore misses the CTCF site that is really there -- is tested in
+section 8 of that report. It does not hold: the CTCF density profile has its minimum at the
+call itself, so the calls are positionally precise, and widening the window only dilutes
+the fold toward 1. Positional tolerance does help elsewhere, nearly tripling the loci
+recovered at more than one bin size, and `results/CANDIDATES.md` is the short list built
+that way, with a literature note on each locus worth a second look.
+
+```bash
+cd merge_split_real_biology
+snakemake --cores 4
+```

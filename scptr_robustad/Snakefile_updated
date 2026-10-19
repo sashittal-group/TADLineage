@@ -1,0 +1,124 @@
+import sys
+
+CHROMS = [f"chr{i}" for i in range(1, 20)] + ["chrX"]
+TOLERANCES = list(range(6))
+RESOLUTIONS = ["250kb"]
+K = 5
+TOP_TADS_PER_CELL = 20
+MAX_UNIQUE_BOUNDARIES = 100
+LABEL_FRACTION = 0.93
+PYTHON = sys.executable
+PER_STAGE_BY_RESOLUTION = {
+}
+ALL_CHR_PER_STAGE_BY_RESOLUTION = {
+    "250kb": 10,
+}
+
+
+wildcard_constraints:
+    chrom="chr[0-9]+|chrX",
+    tol="[0-9]+"
+
+
+rule all:
+    input:
+        expand(
+            "results_updated/scptr_runs_all_cells/{resolution}/{chrom}/tol_{tol}.json",
+            resolution=RESOLUTIONS,
+            chrom=CHROMS,
+            tol=TOLERANCES,
+        ),
+        expand(
+            "results_updated/scptr_runs_all_cells/{resolution}/{chrom}/tol_{tol}.png",
+            resolution=RESOLUTIONS,
+            chrom=CHROMS,
+            tol=TOLERANCES,
+        ),
+        expand(
+            "results_updated/scptr_runs_all_cells/{resolution}/all/tol_{tol}.json",
+            resolution=RESOLUTIONS,
+            tol=TOLERANCES,
+        ),
+        expand(
+            "results_updated/scptr_runs_all_cells/{resolution}/all/tol_{tol}.png",
+            resolution=RESOLUTIONS,
+            tol=TOLERANCES,
+        ),
+        "results_updated/scptr_tree_distance/all_tree_distances.csv"
+
+
+rule run_scptr_robustad_updated_em:
+    output:
+        png="results_updated/scptr_runs_all_cells/{resolution}/{chrom}/tol_{tol}.png",
+        json="results_updated/scptr_runs_all_cells/{resolution}/{chrom}/tol_{tol}.json"
+    log:
+        "logs_updated/scptr_runs_all_cells/{resolution}/{chrom}/tol_{tol}.log"
+    params:
+        label_fraction=LABEL_FRACTION,
+        top_tads_per_cell=TOP_TADS_PER_CELL,
+        max_unique_boundaries=MAX_UNIQUE_BOUNDARIES,
+        per_stage=lambda wildcards: PER_STAGE_BY_RESOLUTION.get(wildcards.resolution, 0),
+        k=K
+    shell:
+        "{PYTHON} em_cluster_updated.py "
+        "--chromosome {wildcards.chrom} "
+        "--resolution {wildcards.resolution} "
+        "--tolerance {wildcards.tol} "
+        "--lambda {params.label_fraction} "
+        "--top-tads-per-cell {params.top_tads_per_cell} "
+        "--max-unique-boundaries {params.max_unique_boundaries} "
+        "--per-stage {params.per_stage} "
+        "--k {params.k} "
+        "--json-out {output.json} "
+        "--output {output.png} "
+        "> {log} 2>&1"
+
+
+rule run_scptr_robustad_updated_em_all_chr:
+    output:
+        png="results_updated/scptr_runs_all_cells/{resolution}/all/tol_{tol}.png",
+        json="results_updated/scptr_runs_all_cells/{resolution}/all/tol_{tol}.json"
+    log:
+        "logs_updated/scptr_runs_all_cells/{resolution}/all/tol_{tol}.log"
+    params:
+        label_fraction=LABEL_FRACTION,
+        top_tads_per_cell=TOP_TADS_PER_CELL,
+        max_unique_boundaries=MAX_UNIQUE_BOUNDARIES,
+        per_stage=lambda wildcards: ALL_CHR_PER_STAGE_BY_RESOLUTION.get(wildcards.resolution, 0),
+        k=K
+    shell:
+        "{PYTHON} em_cluster_updated_all_chr.py "
+        "--resolution {wildcards.resolution} "
+        "--tolerance {wildcards.tol} "
+        "--lambda {params.label_fraction} "
+        "--top-tads-per-cell {params.top_tads_per_cell} "
+        "--max-unique-boundaries {params.max_unique_boundaries} "
+        "--per-stage {params.per_stage} "
+        "--k {params.k} "
+        "--json-out {output.json} "
+        "--output {output.png} "
+        "> {log} 2>&1"
+
+
+rule aggregate_tree_distance_updated:
+    input:
+        expand(
+            "results_updated/scptr_runs_all_cells/{resolution}/{chrom}/tol_{tol}.json",
+            resolution=RESOLUTIONS,
+            chrom=CHROMS,
+            tol=TOLERANCES,
+        ),
+        expand(
+            "results_updated/scptr_runs_all_cells/{resolution}/all/tol_{tol}.json",
+            resolution=RESOLUTIONS,
+            tol=TOLERANCES,
+        )
+    output:
+        "results_updated/scptr_tree_distance/all_tree_distances.csv"
+    log:
+        "logs_updated/scptr_tree_distance/all_tree_distances.log"
+    shell:
+        "{PYTHON} aggregate_tree_distance_json.py "
+        "--input-glob 'results_updated/scptr_runs_all_cells/**/*.json' "
+        "--output-csv {output} "
+        "> {log} 2>&1"

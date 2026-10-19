@@ -1,0 +1,138 @@
+# Tree-informed TAD inference at the LEAVES.
+#
+# Every leaf is observed (noisy Hi-C -> OnTAD) AND scored against its own hidden
+# ground truth. The tree is used to repair the calls: a TAD the caller missed in
+# one leaf but found in its relatives is imputed back in, via the shared ILP
+# `check_lp_constrained.solve_lp_from_edges_and_leaves(..., impute=True)`.
+#
+# Contrast with ../data_quality_sweep, which reconstructs the hidden INTERNAL
+# nodes and treats the leaves as fixed, trusted inputs. Here the leaves are the
+# thing being estimated and nothing is given for free.
+#
+# Two stages, each in its natural interpreter:
+#   CALL  : run OnTAD on every leaf at every depth level, cache the calls
+#   SCORE : solve the imputation ILP from the cached calls + score vs truth (gurobi)
+# SCORE rebuilds the ground truth deterministically from the same seed, so both
+# stages MUST get identical simulation params -- that is what COMMON below is for.
+#
+# Run (from this directory):
+#   snakemake --cores 8
+# Quick look at one tree:
+#   snakemake --cores 4 results/tree00/region_000.json
+
+# --- Replication ------------------------------------------------------------
+# Trees and regions are pure replication axes; results are pooled over both.
+# More nodes => more leaves => more sibling support for imputation. EVENTS_PER_EDGE
+# is deliberately small: relatives have to actually share TADs for the tree to
+# carry information (at 3 events/edge the leaves diverge enough that most of a
+# leaf's missed TADs are in no relative at all, and imputation has nothing to copy).
+N_NODES = 16                   # -> 9 to 11 leaves (10 random topologies)
+N_TREES = 10
+TREE_SEED = 20240101
+TREES = [f"tree{i:02d}" for i in range(N_TREES)]
+
+N_REGIONS = 20
+REGIONS = list(range(N_REGIONS))
+
+# --- Simulation -------------------------------------------------------------
+N_BINS = 500
+N_TOP_TADS = 10
+NESTING_DEPTH = 2
+MIN_SIZE = 8
+MIN_SCORE_NODE_TADS = 6
+EVENTS_PER_EDGE = 1
+TOLERANCE = 2
+
+# Base count density. Following the data_quality_sweep convention
+# A = A_REF * (bin_kb/REF_KB)^2 with A_REF=2000 at 40 kb, 7.8 is the 2.5 kb
+# regime. It has to be this count-poor for down-sampling to degrade OnTAD at all:
+# at 40 kb the matrices stay so count-rich that leaf F1 is flat across the whole
+# depth ladder, leaving nothing for imputation to repair.
+AMPLITUDE = 7.8
+
+# --- Imputation -------------------------------------------------------------
+# impute_cost prices each interval a leaf gains. It MUST be > 0: the parsimony
+# objective charges only for differences along edges, so adding an interval to a
+# parent and all its children is free and the LP floods every leaf (measured:
+# leaf precision 0.37 -> 0.07).
+SNAP_COSTS = "0.5,1.0,1.5,3.0"
+HEADLINE_COST = 1.0
+
+# --- Interpreters -----------------------------------------------------------
+PYTHON_ONTAD = "/Library/Frameworks/Python.framework/Versions/3.12/bin/python3.12"  # numpy (OnTAD is a binary)
+PYTHON_RECON = "/Users/PSLabMonisha/miniforge3/envs/snakemake-tutorial/bin/python"  # numpy + gurobipy
+PYTHON_PLOT = PYTHON_RECON
+
+ONTAD_BIN = "../../OnTAD/OnTAD/src/OnTAD"
+CALLS = "calls"
+RESULTS = "results"
+PLOTS = "plots"
+
+COMMON = (
+    f"--n-nodes {N_NODES} --tree-seed {TREE_SEED} "
+    f"--tolerance {TOLERANCE} --amplitude {AMPLITUDE} "
+    f"--n-bins {N_BINS} --n-top-tads {N_TOP_TADS} --nesting-depth {NESTING_DEPTH} "
+    f"--min-size {MIN_SIZE} --min-score-node-tads {MIN_SCORE_NODE_TADS} "
+    f"--events-per-edge {EVENTS_PER_EDGE}"
+)
+
+
+wildcard_constraints:
+    idx=r"\d+",
+    tree=r"tree\d+"
+
+
+rule all:
+    input:
+        expand(RESULTS + "/{tree}/region_{idx:03d}.json", tree=TREES, idx=REGIONS),
+        PLOTS + "/f1_vs_noise.png",
+        PLOTS + "/f1_vs_noise_by_cost.png",
+        PLOTS + "/impute_gain.png",
+        PLOTS + "/leaf_metrics_long.csv",
+        PLOTS + "/leaf_metrics_summary.csv"
+
+
+rule call_ontad:
+    output:
+        CALLS + "/{tree}/region_{idx}.json"
+    log:
+        "logs/call_{tree}_region_{idx}.log"
+    shell:
+        "{PYTHON_ONTAD} run_tree_impute.py --tree {wildcards.tree} "
+        "--region-index {wildcards.idx} --stage call "
+        "--ontad-bin {ONTAD_BIN} "
+        "--outdir {CALLS}/{wildcards.tree} "
+        + COMMON + " > {log} 2>&1"
+
+
+rule score:
+    input:
+        calls=CALLS + "/{tree}/region_{idx}.json"
+    output:
+        RESULTS + "/{tree}/region_{idx}.json"
+    log:
+        "logs/score_{tree}_region_{idx}.log"
+    shell:
+        "{PYTHON_RECON} run_tree_impute.py --tree {wildcards.tree} "
+        "--region-index {wildcards.idx} --stage score "
+        "--calls-json {input.calls} "
+        "--snap-costs {SNAP_COSTS} "
+        "--headline-cost {HEADLINE_COST} "
+        "--outdir {RESULTS}/{wildcards.tree} "
+        + COMMON + " > {log} 2>&1"
+
+
+rule plot:
+    input:
+        expand(RESULTS + "/{tree}/region_{idx:03d}.json", tree=TREES, idx=REGIONS)
+    output:
+        headline=PLOTS + "/f1_vs_noise.png",
+        by_cost=PLOTS + "/f1_vs_noise_by_cost.png",
+        gain=PLOTS + "/impute_gain.png",
+        long_csv=PLOTS + "/leaf_metrics_long.csv",
+        summary_csv=PLOTS + "/leaf_metrics_summary.csv"
+    log:
+        "logs/plot.log"
+    shell:
+        "{PYTHON_PLOT} plot_tree_impute.py --results-dir {RESULTS} --outdir {PLOTS} "
+        "--headline-cost {HEADLINE_COST} > {log} 2>&1"

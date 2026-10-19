@@ -1,0 +1,93 @@
+LINE1 = ["MEP", "MKP", "MK"]
+LINE2 = ["GMP", "G"]
+
+CHRS = [str(i) for i in range(1, 20)]
+RESOLUTIONS = ["1mb", "2mb", "100kb", "250kb", "500kb"]
+TOLS = [0, 1, 2]
+
+OUTDIR = "inferred_intersection"
+
+
+rule all:
+    input:
+        expand(
+            OUTDIR + "/jsons/summary_chr{chr}_{res}_{l1}_{l2}_{tol}.json",
+            chr=CHRS,
+            res=RESOLUTIONS,
+            l1=LINE1,
+            l2=LINE2,
+            tol=TOLS,
+        ),
+        expand(
+            OUTDIR + "/jsons/internal_novelty_chr{chr}_{res}_{l1}_{l2}_{tol}.json",
+            chr=CHRS,
+            res=RESOLUTIONS,
+            l1=LINE1,
+            l2=LINE2,
+            tol=TOLS,
+        ),
+        expand(
+            OUTDIR + "/jsons/missing_tads_chr{chr}_{res}_{l1}_{l2}_{tol}.json",
+            chr=CHRS,
+            res=RESOLUTIONS,
+            l1=LINE1,
+            l2=LINE2,
+            tol=TOLS,
+        )
+
+
+rule infer_internal:
+    input:
+        leaf1=lambda wc: f"{wc.l1}/chr{wc.chr}/{wc.res}/tads.tad",
+        leaf2=lambda wc: f"{wc.l2}/chr{wc.chr}/{wc.res}/tads.tad",
+    output:
+        OUTDIR + "/jsons/summary_chr{chr}_{res}_{l1}_{l2}_{tol}.json"
+    params:
+        outdir=OUTDIR
+    shell:
+        """
+        python check_intermediate_intersection.py \
+            {input.leaf1} {input.leaf2} \
+            --tolerance {wildcards.tol} \
+            --outdir {params.outdir}
+        """
+
+
+rule analyze_internal_novelty:
+    input:
+        inferred_json=OUTDIR + "/jsons/summary_chr{chr}_{res}_{l1}_{l2}_{tol}.json"
+    output:
+        OUTDIR + "/jsons/internal_novelty_chr{chr}_{res}_{l1}_{l2}_{tol}.json"
+    params:
+        outdir=OUTDIR
+    shell:
+        """
+        python analyze_internal_novel_tads.py \
+            --leaf1 {wildcards.l1} \
+            --leaf2 {wildcards.l2} \
+            --chrom {wildcards.chr} \
+            --resolution {wildcards.res} \
+            --tolerance {wildcards.tol} \
+            --outdir {params.outdir} \
+            --output {output}
+        """
+
+
+rule analyze_missing_tads:
+    input:
+        inferred_json=OUTDIR + "/jsons/summary_chr{chr}_{res}_{l1}_{l2}_{tol}.json"
+    output:
+        OUTDIR + "/jsons/missing_tads_chr{chr}_{res}_{l1}_{l2}_{tol}.json"
+    params:
+        outdir=OUTDIR
+    shell:
+        """
+        python analyze_missing_tads.py \
+            --leaf1 {wildcards.l1} \
+            --leaf2 {wildcards.l2} \
+            --chrom {wildcards.chr} \
+            --resolution {wildcards.res} \
+            --tolerance {wildcards.tol} \
+            --outdir {params.outdir} \
+            --output {output}
+        """

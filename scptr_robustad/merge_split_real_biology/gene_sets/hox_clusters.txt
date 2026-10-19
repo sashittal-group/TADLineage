@@ -1,0 +1,45 @@
+# name: Hox clusters A, B, C and D (mouse)
+# source: canonical cluster membership, MGI.
+# why: the Hox clusters are the textbook case of a TAD boundary partitioning a gene cluster
+#      into domains that are regulated separately (Noordermeer et al. 2011, Science 334:222;
+#      Lonfat & Duboule 2015), so they are the natural positive control for whether an event
+#      set lands on developmentally regulated architecture.
+Hoxa1
+Hoxa2
+Hoxa3
+Hoxa4
+Hoxa5
+Hoxa6
+Hoxa7
+Hoxa9
+Hoxa10
+Hoxa11
+Hoxa13
+Hoxb1
+Hoxb2
+Hoxb3
+Hoxb4
+Hoxb5
+Hoxb6
+Hoxb7
+Hoxb8
+Hoxb9
+Hoxb13
+Hoxc4
+Hoxc5
+Hoxc6
+Hoxc8
+Hoxc9
+Hoxc10
+Hoxc11
+Hoxc12
+Hoxc13
+Hoxd1
+Hoxd3
+Hoxd4
+Hoxd8
+Hoxd9
+Hoxd10
+Hoxd11
+Hoxd12
+Hoxd13

@@ -1,0 +1,23 @@
+# name: PRC1.6 (PCGF6-PRC1) subunits
+# source: Gao et al. 2012, Mol Cell 45:344; Trojer et al. 2011, JBC 286:41047;
+#         Stielow et al. 2018, Sci Adv 4:eaau1984 (complex composition).
+# why: three subunits of this one complex -- Pcgf6, E2f6 and Rybp -- fell under three
+#      separate merge loci in results/CANDIDATES.md. This file makes that observation
+#      testable. The set is the canonical subunit list from the papers above and was not
+#      trimmed to match the loci: eleven of the fourteen members are not in any locus.
+#      The test is post hoc and is reported as such; its out-of-sample counterpart is
+#      prc16_germline_targets.txt, which is the prediction that fails.
+Pcgf6
+E2f6
+Max
+Mga
+L3mbtl2
+Ring1
+Rnf2
+Cbx3
+Tfdp1
+Rybp
+Yaf2
+Wdr5
+Hdac1
+Hdac2

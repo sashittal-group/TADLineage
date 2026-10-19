@@ -1,0 +1,54 @@
+# Shared simulation *generation* only.
+#
+# Produces the hidden evolved hierarchies (truth/) and the simulated Hi-C
+# matrices (matrices/) for every node of every region. These matrices are the
+# common input for both TAD-caller analyses:
+#
+#   using_ontad/    -> calls OnTAD on the matrices, then reconstructs A/B/C
+#   using_robustad/ -> calls RobusTAD on the matrices, then reconstructs A/B/C
+#
+# Run this first, then run the Snakefile inside whichever using_* analysis.
+
+N_INSTANCES = 100
+NODES = ["root", "A", "B", "C", "D", "E", "F", "G"]
+PYTHON = "/Library/Frameworks/Python.framework/Versions/3.12/bin/python3.12"
+OUTDIR = "data"
+
+
+wildcard_constraints:
+    idx=r"\d+"
+
+
+rule all:
+    input:
+        "data/meta.json",
+        expand(
+            "data/region_{idx:03d}/truth/{node}.json",
+            idx=range(N_INSTANCES),
+            node=NODES,
+        ),
+        expand(
+            "data/region_{idx:03d}/matrices/{node}.matrix",
+            idx=range(N_INSTANCES),
+            node=NODES,
+        )
+
+
+rule meta:
+    output:
+        "data/meta.json"
+    shell:
+        "{PYTHON} generate_data.py --outdir {OUTDIR} --meta-only"
+
+
+rule generate_instance:
+    output:
+        expand("data/region_{{idx}}/truth/{node}.json", node=NODES),
+        expand("data/region_{{idx}}/truth/{node}.tad", node=NODES),
+        expand("data/region_{{idx}}/matrices/{node}.matrix", node=NODES)
+    log:
+        "logs/generate_instance/region_{idx}.log"
+    shell:
+        "{PYTHON} generate_data.py --outdir {OUTDIR} "
+        "--region-index {wildcards.idx} "
+        "> {log} 2>&1"

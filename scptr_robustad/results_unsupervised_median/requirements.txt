@@ -1,0 +1,7 @@
+# Versions used with Python 3.9.23 in the existing hic_analysis environment.
+numpy==1.26.4
+scipy==1.13.1
+scikit-learn==1.6.1
+numba==0.60.0
+pandas==2.3.1
+matplotlib==3.8.4

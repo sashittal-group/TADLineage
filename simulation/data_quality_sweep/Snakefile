@@ -1,0 +1,173 @@
+# Data-quality sweep: internal-node reconstruction F1 vs. Hi-C data quality.
+#
+# For every (tree, region) this evolves hidden ground-truth hierarchies from the
+# root, then scores internal-node reconstruction against the TRUE hierarchies at
+# a ladder of input-data qualities:
+#
+#   perfect TADs  ->  full-coverage Hi-C  ->  down-sampled / noisy Hi-C
+#
+# Results are pooled across trees and regions (both are replication axes) into a
+# figure of internal-node F1 vs sequencing depth, with one line per bin size
+# (resolution). Noise was dropped (Hi-C is itself noisy); bin size is the lever
+# that turns depth into a real degradation axis.
+#
+# The SCORE stage reconstructs all six methods (given_root, given_root_weighted,
+# rf, rf_weighted, union, intersection) at every quality level -- the same set as
+# the fixed experiment's using_ontad / using_robustad boxplots. given_root_weighted
+# is the deliberately biased baseline and uses a CALLER-SPECIFIC weighted ILP:
+# OnTAD -> check_lp_constrained_weighted, RobusTAD -> check_lp_constrained_weighted_updated.
+#
+# Two stages, each in its natural interpreter (so cooler and gurobipy never need
+# to coexist):
+#   CALL  : run a TAD caller, store the observed given-node calls + scores (caller env)
+#   SCORE : reconstruct all six methods + score vs truth                   (gurobi env)
+# The SCORE stage rebuilds the ground truth deterministically, so the CALL and
+# SCORE stages MUST be given identical simulation params (COMMON below).
+#
+# Run (from this directory) -- generation is in-process, no prior step needed:
+#   snakemake --cores 8
+# Quick subset:
+#   snakemake --cores 4 results/medium/ontad/region_000.json
+
+# Trees: fix a total node count; generate N_TREES distinct RANDOM topologies of
+# that size (every internal node except the root has >= 2 children). Trees are a
+# replication axis -- results are pooled across them.
+N_NODES = 16                   # total nodes per tree (fixed)
+N_TREES = 10                    # how many random trees to generate
+TREE_SEED = 20240101           # master seed for the random topologies
+TREES = [f"tree{i:02d}" for i in range(N_TREES)]
+
+N_REGIONS = 20
+REGIONS = list(range(N_REGIONS))
+
+# The SCORE stage always runs all six methods; there is no method to select here.
+TOLERANCE = 2
+
+# Smaller matrices than the fixed experiment: the sweep runs many caller calls.
+N_BINS = 500
+N_TOP_TADS = 10
+NESTING_DEPTH = 2
+MIN_SIZE = 8
+MIN_SCORE_NODE_TADS = 6
+EVENTS_PER_EDGE = 3
+
+# Resolution family (density scaler). Each depth ladder is run once per bin size;
+# A_REF applies at REF_KB, and finer bins get amplitude ~ (bin_kb/REF_KB)^2.
+# Span coarse -> very fine so the panel fans out: 40 kb is count-rich and flat
+# across depth (the old regime); 2.5 kb is count-poor and falls off steeply as
+# depth drops. (A 40/20/10/5 set leaves 40/20/10 all flat -- only 5 kb breaks
+# away -- so the finer 2.5 kb anchor is what makes the depth decline obvious.)
+BIN_SIZES_KB = "40,10,5,2.5"
+A_REF = 2000.0
+REF_KB = 40.0
+
+# Interpreters. CALL stages use the caller's env; SCORE stages use a gurobi env.
+PYTHON_RECON = "/Users/PSLabMonisha/miniforge3/envs/snakemake-tutorial/bin/python"   # numpy + gurobipy
+PYTHON_ONTAD = "/Library/Frameworks/Python.framework/Versions/3.12/bin/python3.12"   # numpy (OnTAD is a binary)
+PYTHON_ROBUSTAD = "/Users/PSLabMonisha/miniforge3/envs/refhic/bin/python"            # cooler + RobusTAD
+PYTHON_PLOT = PYTHON_RECON
+
+ONTAD_BIN = "../../OnTAD/OnTAD/src/OnTAD"
+CALLS = "calls"
+RESULTS = "results"
+PLOTS = "plots"
+
+# Params shared by CALL and SCORE so the rebuilt truth matches the called
+# matrices. (Solver-only flags like --method matter to SCORE only, but passing
+# them to CALL is harmless.)
+COMMON = (
+    f"--n-nodes {N_NODES} --tree-seed {TREE_SEED} "
+    f"--tolerance {TOLERANCE} "
+    f"--n-bins {N_BINS} --n-top-tads {N_TOP_TADS} --nesting-depth {NESTING_DEPTH} "
+    f"--min-size {MIN_SIZE} --min-score-node-tads {MIN_SCORE_NODE_TADS} "
+    f"--events-per-edge {EVENTS_PER_EDGE} "
+    f"--bin-sizes-kb {BIN_SIZES_KB} --a-ref {A_REF} --ref-kb {REF_KB}"
+)
+
+
+wildcard_constraints:
+    idx=r"\d+",
+    tree=r"tree\d+",
+    caller="ontad|robustad"
+
+
+rule all:
+    input:
+        expand(RESULTS + "/{tree}/perfect/region_{idx:03d}.json", tree=TREES, idx=REGIONS),
+        expand(RESULTS + "/{tree}/ontad/region_{idx:03d}.json", tree=TREES, idx=REGIONS),
+        expand(RESULTS + "/{tree}/robustad/region_{idx:03d}.json", tree=TREES, idx=REGIONS),
+        PLOTS + "/f1_vs_depth_by_binsize.png",
+        PLOTS + "/f1_vs_depth_by_binsize_allmethods.png",
+        PLOTS + "/sweep_metrics_long.csv",
+        PLOTS + "/sweep_metrics_summary.csv"
+
+
+# --- CALL stage -------------------------------------------------------------
+rule call_ontad:
+    output:
+        CALLS + "/{tree}/ontad/region_{idx}.json"
+    log:
+        "logs/call_{tree}_ontad_region_{idx}.log"
+    shell:
+        "{PYTHON_ONTAD} run_sweep.py --tree {wildcards.tree} "
+        "--region-index {wildcards.idx} --stage call --caller ontad "
+        "--ontad-bin {ONTAD_BIN} "
+        "--outdir {CALLS}/{wildcards.tree}/ontad "
+        + COMMON + " > {log} 2>&1"
+
+
+rule call_robustad:
+    output:
+        CALLS + "/{tree}/robustad/region_{idx}.json"
+    log:
+        "logs/call_{tree}_robustad_region_{idx}.log"
+    shell:
+        "{PYTHON_ROBUSTAD} run_sweep.py --tree {wildcards.tree} "
+        "--region-index {wildcards.idx} --stage call --caller robustad "
+        "--outdir {CALLS}/{wildcards.tree}/robustad "
+        + COMMON + " > {log} 2>&1"
+
+
+# --- SCORE stage ------------------------------------------------------------
+rule score_caller:
+    input:
+        calls=CALLS + "/{tree}/{caller}/region_{idx}.json"
+    output:
+        RESULTS + "/{tree}/{caller}/region_{idx}.json"
+    log:
+        "logs/score_{tree}_{caller}_region_{idx}.log"
+    shell:
+        "{PYTHON_RECON} run_sweep.py --tree {wildcards.tree} "
+        "--region-index {wildcards.idx} --stage score --caller {wildcards.caller} "
+        "--calls-json {input.calls} "
+        "--outdir {RESULTS}/{wildcards.tree}/{wildcards.caller} "
+        + COMMON + " > {log} 2>&1"
+
+
+rule perfect:
+    output:
+        RESULTS + "/{tree}/perfect/region_{idx}.json"
+    log:
+        "logs/score_{tree}_perfect_region_{idx}.log"
+    shell:
+        "{PYTHON_RECON} run_sweep.py --tree {wildcards.tree} "
+        "--region-index {wildcards.idx} --stage score --caller perfect "
+        "--outdir {RESULTS}/{wildcards.tree}/perfect "
+        + COMMON + " > {log} 2>&1"
+
+
+# --- Aggregate + plot -------------------------------------------------------
+rule plot:
+    input:
+        expand(RESULTS + "/{tree}/perfect/region_{idx:03d}.json", tree=TREES, idx=REGIONS),
+        expand(RESULTS + "/{tree}/ontad/region_{idx:03d}.json", tree=TREES, idx=REGIONS),
+        expand(RESULTS + "/{tree}/robustad/region_{idx:03d}.json", tree=TREES, idx=REGIONS)
+    output:
+        plot=PLOTS + "/f1_vs_depth_by_binsize.png",
+        plot_all=PLOTS + "/f1_vs_depth_by_binsize_allmethods.png",
+        long_csv=PLOTS + "/sweep_metrics_long.csv",
+        summary_csv=PLOTS + "/sweep_metrics_summary.csv"
+    log:
+        "logs/plot.log"
+    shell:
+        "{PYTHON_PLOT} plot_sweep.py --results-dir {RESULTS} --outdir {PLOTS} > {log} 2>&1"

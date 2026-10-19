@@ -1,5 +1,5 @@
 CHROMS = [f"chr{i}" for i in range(1, 20)] + ["chrX"]
-RESOLUTION_BP = 250_000
+RESOLUTION_BP = 1_000_000
 RESOLUTION_LABEL = f"{RESOLUTION_BP // 1_000}kb"
 PYTHON = "/Users/PSLabMonisha/miniforge3/envs/schiccluster/bin/python"
 SCRIPT = "run_schiccluster_scptr.py"
@@ -21,10 +21,15 @@ rule all:
             "results/{resolution}/{chrom}/schiccluster_figure.png",
             resolution=RESOLUTION_LABEL,
             chrom=CHROMS,
-        )
+        ),
+        f"results/{RESOLUTION_LABEL}/all/schiccluster_results.txt",
+        f"results/{RESOLUTION_LABEL}/all/schiccluster_clusters.tsv",
+        f"results/{RESOLUTION_LABEL}/all/schiccluster_figure.png",
 
 
 rule run_schiccluster_scptr:
+    wildcard_constraints:
+        chrom="chr[0-9XY]+"
     output:
         results="results/{resolution}/{chrom}/schiccluster_results.txt",
         clusters="results/{resolution}/{chrom}/schiccluster_clusters.tsv",
@@ -34,4 +39,23 @@ rule run_schiccluster_scptr:
     shell:
         "{PYTHON} {SCRIPT} "
         "--chrom {wildcards.chrom} "
+        "--res {params.resolution_bp}"
+
+
+rule run_schiccluster_scptr_all:
+    input:
+        expand(
+            "results/{resolution}/{chrom}/schiccluster_results.txt",
+            resolution=RESOLUTION_LABEL,
+            chrom=CHROMS,
+        )
+    output:
+        results=f"results/{RESOLUTION_LABEL}/all/schiccluster_results.txt",
+        clusters=f"results/{RESOLUTION_LABEL}/all/schiccluster_clusters.tsv",
+        figure=f"results/{RESOLUTION_LABEL}/all/schiccluster_figure.png"
+    params:
+        resolution_bp=RESOLUTION_BP
+    shell:
+        "{PYTHON} {SCRIPT} "
+        "--chrom all "
         "--res {params.resolution_bp}"

@@ -1,0 +1,69 @@
+"""
+Large parsimony on all ten hematopoietic cell types -- OnTAD calls, unweighted.
+
+Leaves: hemato_cells/<NODE>/chr<C>/<RES>/tads.tad (OnTAD) for
+LT, ST, MPP, CLP, CMP, MEP, GMP, MKP, MK, G; no tree is given. The inferred tree is
+scored by quartet consistency with the known lineage (174 resolved quartets), per
+tolerance. Solved exactly by branch and bound over topologies (all co-optimal
+trees; ../topology_search.py). See ../infer_full_tree.py. Run from this folder:
+
+    nohup caffeinate -is /Users/PSLabMonisha/miniforge3/envs/snakemake-tutorial/bin/snakemake \
+        --cores 8 -p --rerun-incomplete --keep-going > snakemake_run.log 2>&1 &
+"""
+
+PYTHON = "/Users/PSLabMonisha/miniforge3/envs/snakemake-tutorial/bin/python"   # gurobipy + pandas
+SCRIPTS = ".."
+DATA_DIR = "../.."          # hemato_cells
+
+NODES = ["LT", "ST", "MPP", "CLP", "CMP", "MEP", "GMP", "MKP", "MK", "G"]
+CHRS = [str(i) for i in range(1, 20)]
+RESOLUTIONS = ["2mb", "1mb", "500kb", "250kb"]   # 100kb: chr19 alone did not finish enumerating in 10 min
+TOLS = [0, 1, 2, 3, 4, 5]
+
+MODE = "convex"
+CT = 1.0
+CB = 1.0
+
+GUROBI_THREADS = 2
+TIME_LIMIT = 0          # seconds per Gurobi call; 0 = no limit. A timed-out instance
+                        # is recorded with its status and left out of the summary.
+
+wildcard_constraints:
+    chr=r"\d+",
+    res=r"\d+(kb|mb)",
+    tol=r"\d+",
+
+
+rule all:
+    input:
+        "results/summary/full_tree_summary.txt",
+
+
+rule infer_full_tree:
+    input:
+        [DATA_DIR + "/" + n + "/chr{chr}/{res}/tads.tad" for n in NODES],
+    output:
+        "results/jsons/full_chr{chr}_{res}_{tol}.json",
+    log:
+        "results/logs/full_chr{chr}_{res}_{tol}.log",
+    threads: GUROBI_THREADS
+    shell:
+        "{PYTHON} {SCRIPTS}/infer_full_tree.py --data-dir {DATA_DIR} "
+        "--chrom {wildcards.chr} --resolution {wildcards.res} --tolerance {wildcards.tol} "
+        "--mode {MODE} --Ct {CT} --Cb {CB} "
+        "--threads {threads} --time-limit {TIME_LIMIT} --solver-log "
+        "--output {output} > {log} 2>&1"
+
+
+rule summary:
+    input:
+        expand("results/jsons/full_chr{chr}_{res}_{tol}.json", chr=CHRS, res=RESOLUTIONS, tol=TOLS),
+    output:
+        "results/summary/full_tree_summary.txt",
+        "results/summary/full_tree_summary.csv",
+        "results/summary/full_tree_per_instance.csv",
+    log:
+        "results/logs/summary.log",
+    shell:
+        "{PYTHON} {SCRIPTS}/aggregate_full_tree.py --json-dir results/jsons "
+        "--outdir results/summary > {log} 2>&1"

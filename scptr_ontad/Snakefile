@@ -1,0 +1,218 @@
+# OnTAD single-cell clustering over the embryo stages: EM clustering of each cell's TAD set
+# at every chromosome, bin size and boundary tolerance.
+#
+# Run from inside this folder:
+#     screen -dmS ontad caffeinate -is \
+#       /Users/PSLabMonisha/miniforge3/envs/snakemake-tutorial/bin/snakemake \
+#       --cores 4 -p --keep-going --rerun-incomplete
+#     screen -r ontad
+#
+# The default target is the per-chromosome grid, 20 chromosomes x 3 bin sizes x 6
+# tolerances, which is what the downstream analyses read. The genome-wide `all/` runs and
+# the tree-distance table are deliberately not in `rule all`: they are the expensive ones,
+# and their bins are laid out with mm9 chromosome sizes over mm10 data, so genomic
+# coordinates near a chromosome end are unreliable. Ask for them by name when you want them:
+#
+#     snakemake results_updated/scptr_tree_distance/all_tree_distances.csv --cores 4
+#
+# ONE JOB PER CHROMOSOME, NOT PER TOLERANCE. `em_cluster_ontad.py` calls
+# `harmonize_leaf_boundaries`, which writes `tads_filtered.tad` -- and later
+# `tads_filtered_imputed.tad` -- next to the input data, at
+# ../scptr/cell_differentiation/<stage>/<sample>/<chrom>/<resolution>/. That path carries no
+# tolerance. Two jobs on the same chromosome and bin size at different tolerances therefore
+# write the same files, and if they overlap in time one of them clusters on the other's
+# harmonization, silently and with no error. Different chromosomes and different bin sizes
+# are safe, because those are different paths. So each job here walks the six tolerances
+# sequentially and concurrent jobs never share a file; the genome-wide rule groups its
+# tolerances by bin size for the same reason. Splitting either back into one job per
+# tolerance is only safe under --cores 1.
+#
+# Each job's declared output is a sentinel rather than the run summaries themselves, because
+# snakemake deletes the declared outputs of a failed job: a chromosome where one tolerance
+# fails would otherwise cost you the five that worked. Tolerances whose JSON already exists
+# are skipped, so the workflow resumes cheaply after an interruption.
+#
+# To rebuild one chromosome from scratch:
+#     rm -f results_updated/scptr_runs_all_cells/500kb/chr7/tol_*.json \
+#           results_updated/.clustered/500kb_chr7.done
+# To see how much of the grid is present:
+#     ls results_updated/scptr_runs_all_cells/*/chr*/tol_*.json | wc -l    # of 360
+
+PYTHON = "/Users/PSLabMonisha/miniforge3/envs/snakemake-tutorial/bin/python"
+
+CHROMS = [f"chr{i}" for i in range(1, 20)] + ["chrX"]
+TOLERANCES = list(range(6))
+RESOLUTIONS = ["250kb", "500kb", "1000kb"]
+
+K = 5
+TOP_TADS_PER_CELL = 5
+MAX_UNIQUE_BOUNDARIES = 100
+LABEL_FRACTION = 0.95
+# the genome-wide runs pool every chromosome, so they carry more cells and use a lower
+# label fraction than the per-chromosome ones
+ALL_CHR_LABEL_FRACTION = 0.90
+# Cap the cells that enter a run, as scptr_robustad does with --per-stage 10. Without a
+# cap the selection keeps every cell that fits the boundary budget, and a coarse bin fits
+# far more of them: the uncapped runs carried 25-121 cells at 500 kb and up to 508 at
+# 1 Mb, against 50 at 250 kb, which is why 1 Mb was the slowest resolution rather than the
+# fastest. The imputation over the 64-cell stage is the step that pays for it. Capping all
+# three at 10 per stage also makes the grid internally comparable, which it was not while
+# only 250 kb was capped.
+PER_STAGE = 10
+PER_STAGE_BY_RESOLUTION = {resolution: PER_STAGE for resolution in RESOLUTIONS}
+
+RUNS = "results_updated/scptr_runs_all_cells"
+TOLERANCE_LIST = " ".join(str(t) for t in TOLERANCES)
+
+
+wildcard_constraints:
+    chrom="chr[0-9]+|chrX",
+    resolution="[0-9]+kb",
+
+
+rule all:
+    input:
+        expand("results_updated/.clustered/{resolution}_{chrom}.done",
+               resolution=RESOLUTIONS, chrom=CHROMS),
+
+
+rule cluster_chromosome:
+    # every tolerance of one chromosome, in one job, so that no two running jobs share a
+    # tads_filtered.tad
+    output:
+        touch("results_updated/.clustered/{resolution}_{chrom}.done")
+    log:
+        "logs_updated/scptr_runs_all_cells/{resolution}/{chrom}/all_tolerances.log"
+    params:
+        tolerances=TOLERANCE_LIST,
+        label_fraction=LABEL_FRACTION,
+        top_tads_per_cell=TOP_TADS_PER_CELL,
+        max_unique_boundaries=MAX_UNIQUE_BOUNDARIES,
+        per_stage=lambda wildcards: PER_STAGE_BY_RESOLUTION.get(wildcards.resolution, 0),
+        k=K,
+        runs=RUNS,
+    shell:
+        r"""
+        mkdir -p {params.runs}/{wildcards.resolution}/{wildcards.chrom}
+        failed=""
+        for tol in {params.tolerances}; do
+            json={params.runs}/{wildcards.resolution}/{wildcards.chrom}/tol_$tol.json
+            png={params.runs}/{wildcards.resolution}/{wildcards.chrom}/tol_$tol.png
+            if [ -s "$json" ]; then
+                echo "== tolerance $tol already done, skipping" >> {log}
+                continue
+            fi
+            echo "== tolerance $tol starting" >> {log}
+            if {PYTHON} em_cluster_ontad_weighted.py \
+                --base-dir ../scptr/cell_differentiation \
+                --chromosome {wildcards.chrom} \
+                --resolution {wildcards.resolution} \
+                --tolerance $tol \
+                --lambda {params.label_fraction} \
+                --top-tads-per-cell {params.top_tads_per_cell} \
+                --max-unique-boundaries {params.max_unique_boundaries} \
+                --per-stage {params.per_stage} \
+                --k {params.k} \
+                --json-out "$json" \
+                --output "$png" \
+                < /dev/null >> {log} 2>&1
+            then
+                echo "== tolerance $tol done" >> {log}
+            else
+                echo "== tolerance $tol FAILED" >> {log}
+                failed="$failed $tol"
+            fi
+        done
+        if [ -n "$failed" ]; then
+            echo "tolerances failed for {wildcards.resolution} {wildcards.chrom}:$failed" >&2
+            exit 1
+        fi
+        """
+
+
+rule build_ontad_genomewide_tads:
+    output:
+        "results_updated/scptr_merged_all_chr/{resolution}/_complete.txt"
+    log:
+        "logs_updated/scptr_merged_all_chr/{resolution}/build.log"
+    shell:
+        "{PYTHON} merge_ontad_genomewide.py "
+        "--input-base ../scptr/cell_differentiation "
+        "--output-base results_updated/scptr_merged_all_chr "
+        "--genome-sizes ../genome.chrom.sizes "
+        "--resolution {wildcards.resolution} "
+        "--complete-out {output} "
+        "< /dev/null > {log} 2>&1"
+
+
+rule cluster_genomewide:
+    # the same grouping as cluster_chromosome, for the same reason: these runs harmonize
+    # inside results_updated/scptr_merged_all_chr/<resolution>/, a path with no tolerance
+    input:
+        "results_updated/scptr_merged_all_chr/{resolution}/_complete.txt"
+    output:
+        touch("results_updated/.clustered/{resolution}_all.done")
+    log:
+        "logs_updated/scptr_runs_all_cells/{resolution}/all/all_tolerances.log"
+    params:
+        tolerances=TOLERANCE_LIST,
+        label_fraction=ALL_CHR_LABEL_FRACTION,
+        top_tads_per_cell=TOP_TADS_PER_CELL,
+        max_unique_boundaries=MAX_UNIQUE_BOUNDARIES,
+        per_stage=lambda wildcards: PER_STAGE_BY_RESOLUTION.get(wildcards.resolution, 0),
+        k=K,
+        runs=RUNS,
+    shell:
+        r"""
+        mkdir -p {params.runs}/{wildcards.resolution}/all
+        failed=""
+        for tol in {params.tolerances}; do
+            json={params.runs}/{wildcards.resolution}/all/tol_$tol.json
+            png={params.runs}/{wildcards.resolution}/all/tol_$tol.png
+            if [ -s "$json" ]; then
+                echo "== tolerance $tol already done, skipping" >> {log}
+                continue
+            fi
+            echo "== tolerance $tol starting" >> {log}
+            if {PYTHON} em_cluster_ontad_all_chr.py \
+                --work-base-dir results_updated/scptr_merged_all_chr \
+                --resolution {wildcards.resolution} \
+                --tolerance $tol \
+                --lambda {params.label_fraction} \
+                --top-tads-per-cell {params.top_tads_per_cell} \
+                --max-unique-boundaries {params.max_unique_boundaries} \
+                --per-stage {params.per_stage} \
+                --k {params.k} \
+                --json-out "$json" \
+                --output "$png" \
+                < /dev/null >> {log} 2>&1
+            then
+                echo "== tolerance $tol done" >> {log}
+            else
+                echo "== tolerance $tol FAILED" >> {log}
+                failed="$failed $tol"
+            fi
+        done
+        if [ -n "$failed" ]; then
+            echo "tolerances failed for {wildcards.resolution} all:$failed" >&2
+            exit 1
+        fi
+        """
+
+
+rule aggregate_tree_distance_updated:
+    # not in `rule all`: it pulls in the genome-wide runs
+    input:
+        expand("results_updated/.clustered/{resolution}_{chrom}.done",
+               resolution=RESOLUTIONS, chrom=CHROMS),
+        expand("results_updated/.clustered/{resolution}_all.done",
+               resolution=RESOLUTIONS),
+    output:
+        "results_updated/scptr_tree_distance/all_tree_distances.csv"
+    log:
+        "logs_updated/scptr_tree_distance/all_tree_distances.log"
+    shell:
+        "{PYTHON} aggregate_tree_distance_json.py "
+        "--input-glob 'results_updated/scptr_runs_all_cells/**/*.json' "
+        "--output-csv {output} "
+        "< /dev/null > {log} 2>&1"

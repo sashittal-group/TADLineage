@@ -1,0 +1,52 @@
+# name: Germline and meiotic genes repressed by PRC1.6
+# source: Endoh et al. 2017, eLife 6:e21064; Suzuki et al. 2016, eLife 5:e18101;
+#         Maeda et al. 2013, PLoS Genet 9:e1003377; Stielow et al. 2018, Sci Adv 4:eaau1984.
+# why: the out-of-sample test of the PRC1.6 observation. PRC1.6 exists to keep these genes
+#      off in the early embryo, so if merge loci were about PRC1.6 the targets should sit
+#      on them as well as the subunits. Defined from the papers above, independently of
+#      anything in this folder.
+Mael
+Dazl
+Ddx4
+Sycp1
+Sycp2
+Sycp3
+Stag3
+Tdrd1
+Tdrkh
+Piwil1
+Piwil2
+Mov10l1
+Rnf17
+Taf7l
+Slc25a31
+Tex12
+Tex14
+Tex15
+Tex19.1
+Hormad1
+Hormad2
+Smc1b
+Meiob
+Spo11
+Rec8
+Msh4
+Msh5
+Dmc1
+Syce1
+Syce2
+Syce3
+Asz1
+Ddx25
+Tuba3a
+Tuba3b
+Cage1
+Majin
+Terb1
+Terb2
+Sun5
+Aurkc
+Rad51ap2
+Nlrp14
+Tex101
+Prdm9

@@ -1,4 +1,12 @@
+import os
 from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent
+CACHE_DIR = ROOT / "work" / "python_cache"
+os.environ.setdefault("MPLCONFIGDIR", str(CACHE_DIR / "matplotlib"))
+os.environ.setdefault("XDG_CACHE_HOME", str(CACHE_DIR / "xdg"))
+for cache_key in ("MPLCONFIGDIR", "XDG_CACHE_HOME"):
+    Path(os.environ[cache_key]).mkdir(parents=True, exist_ok=True)
 
 import matplotlib
 
@@ -6,7 +14,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 
-RESULTS_DIR = Path(__file__).resolve().parent / "results"
+RESULTS_DIR = ROOT / "results"
 RESOLUTIONS = ["250kb", "500kb", "1000kb"]
 RESULT_SPECS = {
     "cluster": {
@@ -27,6 +35,8 @@ def resolution_key(resolution):
 
 
 def chrom_key(chromosome):
+    if chromosome == "all":
+        return 25
     label = chromosome.replace("chr", "")
     if label == "X":
         return 23
@@ -55,7 +65,7 @@ def collect_rows():
     rows = []
     for resolution in RESOLUTIONS:
         resolution_dir = RESULTS_DIR / resolution
-        for chrom_dir in sorted(resolution_dir.glob("chr*"), key=lambda p: chrom_key(p.name)):
+        for chrom_dir in sorted(resolution_dir.glob("*"), key=lambda p: chrom_key(p.name)):
             if not chrom_dir.is_dir():
                 continue
             for kind, spec in RESULT_SPECS.items():
@@ -93,18 +103,22 @@ def plot_by_resolution(rows, kind, spec, fig_dir):
         values = [
             row["ari"]
             for row in rows
-            if row["kind"] == kind and row["resolution"] == resolution
+            if (
+                row["kind"] == kind
+                and row["resolution"] == resolution
+                and row["chromosome"] == "all"
+            )
         ]
         if values:
-            by_resolution.append((resolution, average(values)))
+            by_resolution.append((resolution, values[0]))
 
     fig, ax = plt.subplots(figsize=(6, 4), constrained_layout=True)
     x_values = [item[0] for item in by_resolution]
     y_values = [item[1] for item in by_resolution]
     ax.scatter(x_values, y_values, s=90, color=spec["color"], zorder=3)
-    ax.set_title(f"{spec['title']} by Resolution")
+    ax.set_title(f"{spec['title']} by Resolution scHiCluster, All Chromosomes")
     ax.set_xlabel("Resolution")
-    ax.set_ylabel("Average ARI")
+    ax.set_ylabel("ARI")
     ax.set_ylim(0, max(0.01, max(y_values) * 1.25))
     for x_value, y_value in by_resolution:
         ax.annotate(
@@ -114,7 +128,7 @@ def plot_by_resolution(rows, kind, spec, fig_dir):
             xytext=(0, 8),
             ha="center",
         )
-    fig.savefig(fig_dir / f"{kind}_ari_by_resolution.png", dpi=300)
+    fig.savefig(fig_dir / f"{kind}_ari_by_res_all_chr.png", dpi=300)
     plt.close(fig)
 
 
@@ -136,7 +150,7 @@ def plot_by_chromosome(rows, kind, spec, fig_dir):
     x_values = [item[0] for item in by_chromosome]
     y_values = [item[1] for item in by_chromosome]
     ax.scatter(x_values, y_values, s=55, color=spec["color"], zorder=3)
-    ax.set_title(f"{spec['title']} by Chromosome")
+    ax.set_title(f"{spec['title']} by Chromosome scHiCluster")
     ax.set_xlabel("Chromosome")
     ax.set_ylabel("Average ARI")
     ax.set_ylim(0, max(0.01, max(y_values) * 1.20))

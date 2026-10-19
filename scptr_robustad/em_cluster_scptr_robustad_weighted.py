@@ -103,14 +103,20 @@ def make_side_by_side_plot(
     extra_stage_counts=None,
     cluster_majorities=None,
 ):
-    unique_true = sorted(set(true_labels))
-    cmap_true = plt.cm.get_cmap("tab10", len(unique_true))
+    extra_stage_counts = extra_stage_counts or {}
+    unique_true = [
+        stage
+        for stage in STAGE_ORDER
+        if stage in set(true_labels) or extra_stage_counts.get(stage, 0) > 0
+    ]
+    if not unique_true:
+        unique_true = sorted(set(true_labels))
+    cmap_true = plt.cm.get_cmap("tab10", max(1, len(unique_true)))
     true_to_id = {label: idx for idx, label in enumerate(unique_true)}
     true_ids = [true_to_id[x] for x in true_labels]
     visible_cell_coords = jitter_points_for_visibility(cell_coords)
     span = np.ptp(cell_coords, axis=0) if len(cell_coords) else np.asarray([1.0, 1.0])
     visual_radius = max(float(span.max()), 1.0) * 0.025
-    extra_stage_counts = extra_stage_counts or {}
     cluster_majorities = cluster_majorities or {}
     cluster_ids = sorted(set(em_labels))
     cluster_to_color = {
@@ -151,11 +157,10 @@ def make_side_by_side_plot(
     for label in unique_true:
         idx = true_to_id[label]
         handles.append(ax1.scatter([], [], c=[cmap_true(idx)], label=label, s=36))
-    visual_handle_added = False
+    visual_handle = None
     for stage, extra_coords in extra_coords_by_stage.items():
         color = cmap_true(true_to_id.get(stage, 0))
-        label = "unselected files (visual only)" if not visual_handle_added else None
-        ax1.scatter(
+        scatter = ax1.scatter(
             extra_coords[:, 0],
             extra_coords[:, 1],
             c=[color],
@@ -163,9 +168,12 @@ def make_side_by_side_plot(
             alpha=0.78,
             linewidths=0.15,
             edgecolors="white",
-            label=label,
         )
-        visual_handle_added = True
+        if visual_handle is None:
+            visual_handle = scatter
+    if visual_handle is not None:
+        visual_handle.set_label("unselected files (visual only)")
+        handles.append(visual_handle)
     ax1.legend(handles=handles, loc="best", fontsize=8)
 
     ax2 = plt.subplot(1, 2, 2)
@@ -559,7 +567,14 @@ def main():
             f"under {resolved_base_dir}"
         )
 
-    if args.resolution == "500kb":
+    if args.per_stage and args.per_stage > 0:
+        print(f"Selecting up to {args.per_stage} files per stage...", flush=True)
+        sampled_records = sample_records_per_stage(
+            records,
+            args.per_stage,
+            random_state=args.random_state,
+        )
+    elif args.resolution == "500kb":
         print("Selecting files per stage with a per-stage boundary budget...", flush=True)
         sampled_records = select_records_by_stage_boundary_budget(
             records,

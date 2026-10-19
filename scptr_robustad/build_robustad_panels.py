@@ -28,11 +28,12 @@ import numpy as np
 import pandas as pd
 
 
-PROJECT_ROOT = Path("/Users/PSLabMonisha/Desktop/tads")
-SCPTR_ROOT = PROJECT_ROOT / "scptr"
-SOURCE_ROOT = SCPTR_ROOT / "cell_differentiation"
+SCPTR_ROOT = Path(__file__).resolve().parent
+PROJECT_ROOT = SCPTR_ROOT.parent
+SOURCE_DATA_ROOT = PROJECT_ROOT / "scptr"
+SOURCE_ROOT = SOURCE_DATA_ROOT / "cell_differentiation"
 OUTPUT_ROOT = SCPTR_ROOT / "robustad_scptr_data"
-METADATA_FILE = SCPTR_ROOT / "GSE129029_metadata.csv"
+METADATA_FILE = SOURCE_DATA_ROOT / "GSE129029_metadata.csv"
 ROBUSTAD_ROOT = PROJECT_ROOT / "robustad"
 TMP_ROOT = Path("/tmp/robustad_scptr")
 STAGES = ["1-cell", "2-cell", "4-cell", "8-cell", "64-cell"]
@@ -75,6 +76,26 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=None,
         help="Resolution stored in each .mcool file. Repeat to process multiple resolutions. Default: 250000",
+    )
+    parser.add_argument(
+        "--output-root",
+        type=Path,
+        default=OUTPUT_ROOT,
+        help="Root directory for RobusTAD outputs, organized by resolution.",
+    )
+    parser.add_argument(
+        "--boundary-alpha",
+        type=float,
+        default=0.05,
+        help=("RobusTAD boundary/LMCC significance cutoff. Larger values are more "
+              "permissive; default: 0.05."),
+    )
+    parser.add_argument(
+        "--reference-panel-root",
+        type=Path,
+        default=None,
+        help=("Reuse existing stage reference panels from this output-root. This holds "
+              "the reference distribution fixed for a cutoff sensitivity analysis."),
     )
     parser.add_argument(
         "--chunksize",
@@ -202,8 +223,8 @@ def resolution_label(resolution: int) -> str:
     return str(resolution // 1000)
 
 
-def output_root_for_resolution(resolution: int) -> Path:
-    return OUTPUT_ROOT / resolution_label(resolution)
+def output_root_for_resolution(root: Path, resolution: int) -> Path:
+    return root / resolution_label(resolution)
 
 
 def run_summary_path(output_root: Path) -> Path:
@@ -317,6 +338,7 @@ def manifest_rows(
     resolution: int,
     boundary_mode: str,
     panel_file: Path | None,
+    boundary_alpha: float,
 ) -> List[Tuple[str, str]]:
     return [
         ("gsm", row["GSM"]),
@@ -325,6 +347,7 @@ def manifest_rows(
         ("source_contact_file", str(source_file)),
         ("resolution_bp", str(resolution)),
         ("boundary_mode", boundary_mode),
+        ("boundary_alpha", str(boundary_alpha)),
         ("panel_file", str(panel_file) if panel_file is not None else ""),
     ]
 
@@ -336,8 +359,14 @@ def ensure_manifest(
     resolution: int,
     boundary_mode: str,
     panel_file: Path | None,
+    boundary_alpha: float,
 ) -> None:
-    text = "\n".join(f"{key}\t{value}" for key, value in manifest_rows(row, source_file, resolution, boundary_mode, panel_file)) + "\n"
+    text = "\n".join(
+        f"{key}\t{value}"
+        for key, value in manifest_rows(
+            row, source_file, resolution, boundary_mode, panel_file, boundary_alpha
+        )
+    ) + "\n"
     paths["manifest"].write_text(text)
 
 
@@ -363,6 +392,7 @@ def outputs_match_request(
     resolution: int,
     boundary_mode: str,
     panel_file: Path | None,
+    boundary_alpha: float,
     require_tads: bool,
 ) -> bool:
     required = [paths["boundary_bed"], paths["manifest"]]
@@ -372,7 +402,9 @@ def outputs_match_request(
         return False
 
     manifest = load_manifest(paths["manifest"])
-    expected = dict(manifest_rows(row, source_file, resolution, boundary_mode, panel_file))
+    expected = dict(
+        manifest_rows(row, source_file, resolution, boundary_mode, panel_file, boundary_alpha)
+    )
     for key, value in expected.items():
         if manifest.get(key, "") != value:
             return False
@@ -426,6 +458,7 @@ def run_robustad_for_cell(
     resolution: int,
     panel_file: Path | None,
     run_assembly: bool,
+    boundary_alpha: float = 0.05,
 ) -> None:
     if panel_file is None:
         boundary_cmd.callback(
@@ -434,7 +467,7 @@ def run_robustad_for_cell(
             resol=resolution,
             minw=max(100, resolution // 1000),
             maxw=3000,
-            alpha=0.05,
+            alpha=boundary_alpha,
             ratio=1.2,
             chr=None,
             mind=max(100, resolution // 1000),
@@ -443,7 +476,7 @@ def run_robustad_for_cell(
         lmcc_cmd.callback(
             coolfile=str(mcool_path),
             prefix=str(paths["boundary_prefix"]),
-            alpha=0.05,
+            alpha=boundary_alpha,
             chr=None,
             ratio=1.2,
             resol=resolution,
@@ -487,6 +520,7 @@ def process_cell(
     assembly_cmd,
     panel_file: Path | None,
     run_assembly: bool,
+    boundary_alpha: float,
 ) -> Dict[str, Path]:
     source_file = contact_path(row)
     paths = output_paths(row, output_root=output_root, resolution=resolution)
@@ -507,6 +541,7 @@ def process_cell(
         resolution=resolution,
         boundary_mode=boundary_mode,
         panel_file=panel_file,
+        boundary_alpha=boundary_alpha,
         require_tads=run_assembly,
     ):
         logging.info("Reuse existing RobusTAD outputs: %s", paths["cell_dir"])
@@ -535,8 +570,11 @@ def process_cell(
         resolution,
         panel_file,
         run_assembly,
+        boundary_alpha,
     )
-    ensure_manifest(row, paths, source_file, resolution, boundary_mode, panel_file)
+    ensure_manifest(
+        row, paths, source_file, resolution, boundary_mode, panel_file, boundary_alpha
+    )
     if paths["mcool"].exists() and not keep_mcool:
         paths["mcool"].unlink()
     return paths
@@ -584,6 +622,8 @@ def process_stage_with_panels(
     assembly_cmd,
     createdatabase_cmd,
     panels_only: bool,
+    boundary_alpha: float,
+    reference_panel_root: Path | None,
 ) -> List[Tuple[str, str]]:
     failures: List[Tuple[str, str]] = []
 
@@ -595,54 +635,65 @@ def process_stage_with_panels(
         stage_rows = grouped_rows.get(stage, [])
         if not stage_rows:
             continue
-        logging.info("Preparing reference panel for %s at %s kb", stage, resolution_label(resolution))
-        boundary_files: List[Path] = []
-        panel_file = output_root / stage / f"robustad_reference_panel_{resolution}.pkl"
+        if reference_panel_root is not None:
+            panel_file = reference_panel_root / stage / f"robustad_reference_panel_{resolution}.pkl"
+            if not panel_file.exists():
+                message = f"reference panel not found: {panel_file}"
+                logging.error("%s", message)
+                failures.extend((row["GSM"], message) for row in stage_rows)
+                continue
+            logging.info("Reusing reference panel for %s: %s", stage, panel_file)
+            successful_rows = stage_rows
+        else:
+            logging.info("Preparing reference panel for %s at %s kb", stage, resolution_label(resolution))
+            boundary_files: List[Path] = []
+            panel_file = output_root / stage / f"robustad_reference_panel_{resolution}.pkl"
 
-        for row in stage_rows:
-            label = f'{row["CELL_STAGE"]} {row["GSM"]} (panel pass)'
+            for row in stage_rows:
+                label = f'{row["CELL_STAGE"]} {row["GSM"]} (panel pass)'
+                try:
+                    paths = process_cell(
+                        row=row,
+                        output_root=output_root,
+                        bins=bins,
+                        offsets=offsets,
+                        resolution=resolution,
+                        chunksize=chunksize,
+                        force=force,
+                        keep_mcool=keep_mcool,
+                        cooler_module=cooler_module,
+                        create_cooler_fn=create_cooler_fn,
+                        balance_cooler_fn=balance_cooler_fn,
+                        boundary_cmd=boundary_cmd,
+                        lmcc_cmd=lmcc_cmd,
+                        assembly_cmd=assembly_cmd,
+                        panel_file=None,
+                        run_assembly=False,
+                        boundary_alpha=boundary_alpha,
+                    )
+                    boundary_files.append(paths["boundary_bed"])
+                except Exception as exc:
+                    logging.exception("Failed on %s", label)
+                    failures.append((row["GSM"], str(exc)))
+
+            successful_rows = [row for row in stage_rows if row["GSM"] not in {gsm for gsm, _ in failures}]
+            if not boundary_files:
+                continue
+
             try:
-                paths = process_cell(
-                    row=row,
+                build_stage_reference_panel(
                     output_root=output_root,
-                    bins=bins,
-                    offsets=offsets,
+                    stage=stage,
+                    boundary_files=boundary_files,
+                    createdatabase_cmd=createdatabase_cmd,
                     resolution=resolution,
-                    chunksize=chunksize,
                     force=force,
-                    keep_mcool=keep_mcool,
-                    cooler_module=cooler_module,
-                    create_cooler_fn=create_cooler_fn,
-                    balance_cooler_fn=balance_cooler_fn,
-                    boundary_cmd=boundary_cmd,
-                    lmcc_cmd=lmcc_cmd,
-                    assembly_cmd=assembly_cmd,
-                    panel_file=None,
-                    run_assembly=False,
                 )
-                boundary_files.append(paths["boundary_bed"])
             except Exception as exc:
-                logging.exception("Failed on %s", label)
-                failures.append((row["GSM"], str(exc)))
-
-        successful_rows = [row for row in stage_rows if row["GSM"] not in {gsm for gsm, _ in failures}]
-        if not boundary_files:
-            continue
-
-        try:
-            build_stage_reference_panel(
-                output_root=output_root,
-                stage=stage,
-                boundary_files=boundary_files,
-                createdatabase_cmd=createdatabase_cmd,
-                resolution=resolution,
-                force=force,
-            )
-        except Exception as exc:
-            logging.exception("Failed to create reference panel for %s", stage)
-            for row in successful_rows:
-                failures.append((row["GSM"], f"panel creation failed for {stage}: {exc}"))
-            continue
+                logging.exception("Failed to create reference panel for %s", stage)
+                for row in successful_rows:
+                    failures.append((row["GSM"], f"panel creation failed for {stage}: {exc}"))
+                continue
 
         if panels_only:
             continue
@@ -667,6 +718,7 @@ def process_stage_with_panels(
                     assembly_cmd=assembly_cmd,
                     panel_file=panel_file,
                     run_assembly=True,
+                    boundary_alpha=boundary_alpha,
                 )
             except Exception as exc:
                 logging.exception("Failed on %s", label)
@@ -690,6 +742,7 @@ def process_without_panels(
     boundary_cmd,
     lmcc_cmd,
     assembly_cmd,
+    boundary_alpha: float,
 ) -> List[Tuple[str, str]]:
     failures: List[Tuple[str, str]] = []
     for idx, row in enumerate(rows, start=1):
@@ -713,6 +766,7 @@ def process_without_panels(
                 assembly_cmd=assembly_cmd,
                 panel_file=None,
                 run_assembly=True,
+                boundary_alpha=boundary_alpha,
             )
         except Exception as exc:
             logging.exception("Failed on %s", label)
@@ -722,6 +776,8 @@ def process_without_panels(
 
 def main() -> int:
     args = parse_args()
+    if not 0 < args.boundary_alpha <= 1:
+        raise ValueError("--boundary-alpha must be in (0, 1].")
     setup_logging(args.log_level)
     cooler_module, create_cooler_fn, balance_cooler_fn, boundary_cmd, lmcc_cmd, assembly_cmd, createdatabase_cmd = (
         bootstrap_imports()
@@ -739,7 +795,7 @@ def main() -> int:
 
     exit_code = 0
     for resolution in selected_resolutions(args):
-        output_root = output_root_for_resolution(resolution)
+        output_root = output_root_for_resolution(args.output_root, resolution)
         output_root.mkdir(parents=True, exist_ok=True)
         logging.info("Processing resolution %s kb into %s", resolution_label(resolution), output_root)
         bins, offsets = build_bins(resolution)
@@ -760,6 +816,7 @@ def main() -> int:
                 boundary_cmd=boundary_cmd,
                 lmcc_cmd=lmcc_cmd,
                 assembly_cmd=assembly_cmd,
+                boundary_alpha=args.boundary_alpha,
             )
         else:
             failures = process_stage_with_panels(
@@ -779,6 +836,11 @@ def main() -> int:
                 assembly_cmd=assembly_cmd,
                 createdatabase_cmd=createdatabase_cmd,
                 panels_only=args.panels_only,
+                boundary_alpha=args.boundary_alpha,
+                reference_panel_root=(
+                    args.reference_panel_root / resolution_label(resolution)
+                    if args.reference_panel_root is not None else None
+                ),
             )
 
         summary_file = run_summary_path(output_root)

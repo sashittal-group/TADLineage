@@ -1,0 +1,25 @@
+"""
+Large parsimony on the hematopoietic quartet -- OnTAD calls, weighted.
+
+Leaves: hemato_cells/using_ontad/<NODE>/chr<C>/<RES>/tads.tad (OnTAD). Importance
+term of hemato_cells/using_ontad/check_intermediate_given_root_weighted.py: RobusTAD
+TAD scores of MPP and CMP (robustad_predictions/, tads_all, lambda 1) weight the
+TADs of the two internal vertices -- the vertex next to LT gets MPP's scores, the
+cherry parent gets CMP's. Counterpart of
+hemato_cells/using_ontad/check_intermediate_snakemake_given_root_weighted.
+Rules: ../quartet_rules.smk. Run from this folder:
+
+    nohup caffeinate -is /Users/PSLabMonisha/miniforge3/envs/snakemake-tutorial/bin/snakemake \
+        --cores 8 -p --rerun-incomplete --keep-going > snakemake_run.log 2>&1 &
+"""
+
+DATA_DIR = "../../using_ontad"
+WEIGHTING = "ontad_weighted"
+
+
+rule all:
+    input:
+        "results/best_tolerance/best_tolerance_summary.txt",
+
+
+include: "../quartet_rules.smk"

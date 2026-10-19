@@ -1,0 +1,58 @@
+# name: Housekeeping genes (mouse), positive control
+# source: Eisenberg & Levanon 2013, Trends Genet 29:569, mouse orthologues of the
+#         constitutively expressed set; ribosomal protein and core metabolic genes.
+# why: TAD boundaries are constitutively enriched for housekeeping genes (Dixon et al. 2012,
+#      Nature 485:376), so a boundary set that behaves like real boundaries should recover
+#      this enrichment. It is here as a control on the method, not as a finding.
+Actb
+Gapdh
+Tubb5
+Ppia
+Pgk1
+Hprt
+Tbp
+Ywhaz
+B2m
+Rplp0
+Rpl4
+Rpl5
+Rpl7
+Rpl8
+Rpl13a
+Rpl19
+Rpl27
+Rpl30
+Rpl32
+Rps3
+Rps5
+Rps6
+Rps9
+Rps11
+Rps18
+Rps19
+Rps29
+Eef1a1
+Eef2
+Eif4a2
+Eif3a
+Psmb2
+Psmb4
+Psma3
+Sdha
+Vdac1
+Atp5b
+Atp5o
+Cox4i1
+Ndufa8
+Uba52
+Ubc
+Hnrnpa1
+Hnrnpk
+Srsf3
+Ruvbl1
+Canx
+Calr
+Hspa8
+Hsp90ab1
+Pfn1
+Cfl1

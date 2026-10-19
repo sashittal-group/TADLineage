@@ -1,0 +1,22 @@
+# name: Non-canonical, maternal H3K27me3-dependent imprinted genes (mouse, partial)
+# source: Inoue, Jiang, Lu, Suzuki & Zhang 2017, Nature 547:419, "Maternal H3K27me3 controls
+#         DNA methylation-independent imprinting"; Inoue et al. 2017, Genes Dev 31:1927
+#         (Xist); reviewed in Chen & Zhang 2020, Nat Rev Genet 21:555.
+# why: these loci are paternally expressed in preimplantation embryos through maternal
+#      H3K27me3 rather than DNA methylation, and H3K27me3 is the mark Collombet et al. 2020
+#      associate with the preformed maternal domains of exactly these stages.
+# caveat: Inoue et al. report 76 genes; only the members named repeatedly in the paper and
+#         in the reviews are listed here, so this set is a well-attested subset, not the
+#         full list. Treat an overlap with it as a pointer, not as a complete count.
+Sfmbt2
+Gab1
+Jade1
+Sall1
+Smoc1
+Platr20
+Slc38a4
+Xist
+Phf17
+Bbx
+Epas1
+Otx2

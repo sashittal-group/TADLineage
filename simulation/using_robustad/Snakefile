@@ -1,0 +1,77 @@
+# RobusTAD-caller analysis.
+#
+# Reads the shared simulated matrices produced by ../Snakefile, converts each to
+# a cooler and calls RobusTAD (boundary + assembly) on every node of every
+# region, writing bin-indexed calls next to the matrices in the shared data tree
+# (../data/region_XXX/robustad/). Also runs the RobusTAD call-count gate.
+#
+# RobusTAD needs cooler + its own deps, so PYTHON_ROBUSTAD points at the conda
+# env that has them (refhic / hic_analysis); the RobusTAD package is imported
+# from ../../RobusTAD via PYTHONPATH inside run_robustad.py.
+#
+# Prereq: run `snakemake` in the parent simulation/ directory first so the
+# matrices exist.
+#
+# Usage (from this directory):
+#   snakemake --cores 8
+# Then reconstruct + plot with Snakefile_methods.
+
+N_INSTANCES = 100
+NODES = ["root", "A", "B", "C", "D", "E", "F", "G"]
+PYTHON_ROBUSTAD = "/Users/PSLabMonisha/miniforge3/envs/refhic/bin/python"
+DATA_DIR = "../data"                       # shared generation output
+RESOLUTION = 40000
+MINW_KB = 80
+MAXW_KB = 2000
+# RobusTAD is a much more conservative caller than OnTAD (calls ~19-26 TADs/node
+# vs OnTAD's ~68), so the OnTAD gate of 20 does not transfer. Across all 100
+# regions the RobusTAD floor is 19 (region_075:B); 15 stays below that healthy
+# floor while still failing genuinely degenerate (near-empty) nodes.
+MIN_CALLED_TADS = 15
+
+
+wildcard_constraints:
+    idx=r"\d+"
+
+
+rule all:
+    input:
+        expand(
+            DATA_DIR + "/region_{idx:03d}/robustad/{node}_tads_all_with_bins.tsv",
+            idx=range(N_INSTANCES),
+            node=NODES,
+        ),
+        DATA_DIR + "/robustad_count_check.txt"
+
+
+rule call_robustad:
+    input:
+        matrix=DATA_DIR + "/region_{idx}/matrices/{node}.matrix"
+    output:
+        tads_all=DATA_DIR + "/region_{idx}/robustad/{node}_tads_all_with_bins.tsv",
+        tads_hq=DATA_DIR + "/region_{idx}/robustad/{node}_tads_hq_with_bins.tsv",
+        boundary=DATA_DIR + "/region_{idx}/robustad/{node}_boundary_with_bins.tsv"
+    log:
+        "logs/robustad/region_{idx}_{node}.log"
+    shell:
+        "{PYTHON_ROBUSTAD} run_robustad.py --outdir {DATA_DIR} "
+        "--region-index {wildcards.idx} "
+        "--node {wildcards.node} "
+        "--resolution {RESOLUTION} "
+        "--minW {MINW_KB} "
+        "--maxW {MAXW_KB} "
+        "> {log} 2>&1"
+
+
+rule check_robustad_counts:
+    input:
+        expand(
+            DATA_DIR + "/region_{idx:03d}/robustad/{node}_tads_all_with_bins.tsv",
+            idx=range(N_INSTANCES),
+            node=NODES,
+        )
+    output:
+        DATA_DIR + "/robustad_count_check.txt"
+    shell:
+        "{PYTHON_ROBUSTAD} check_robustad_counts.py --outdir {DATA_DIR} "
+        "--min-tads {MIN_CALLED_TADS} > {output}"

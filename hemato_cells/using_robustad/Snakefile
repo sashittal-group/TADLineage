@@ -1,0 +1,358 @@
+"""
+Grand Snakefile: runs all 6 comparison methods (given_root, given_root_weighted,
+rf/Fitch-Hartigan, rf_weighted/SankOff, union, intersection) for every
+chromosome / resolution / leaf-pair / tolerance combo, then regenerates
+comparison_figures/ from the results.
+
+Rules are written out explicitly (not generated in a loop) on purpose: an
+earlier version of this file generated the 6 methods' rules dynamically
+inside a Python for-loop, which tripped a late-binding bug in how Snakemake
+resolved bare-variable `shell:` bodies across loop iterations (every
+dynamically generated rule silently ran the *last* loop iteration's shell
+command instead of its own). Spelling out each rule avoids that entirely.
+
+Run from inside this directory. To avoid exhausting the OS process table
+when many LP-solve jobs run at once, cap concurrency (--cores 4).
+
+When connected over SSH (e.g. remote lab machine), prefer `screen` so the
+run survives a dropped connection and you can reattach and watch progress
+live:
+
+    screen -dmS robustad_run caffeinate -is snakemake --cores 4 -p \
+        --rerun-incomplete --keep-going
+    # reattach any time: screen -r robustad_run
+    # detach without killing:  Ctrl-A then D
+
+Or, if you just want a log file and don't need to reattach, nohup + caffeinate
+(nohup must be outermost, since it only shields the process it directly
+execs):
+
+    nohup caffeinate -is snakemake --cores 4 -p --rerun-incomplete \
+        --keep-going > snakemake_run.log 2>&1 &
+    disown
+"""
+
+LINE1 = ["MEP", "MKP", "MK"]
+LINE2 = ["GMP", "G"]
+CHRS = [str(i) for i in range(1, 20)]
+RESOLUTIONS = ["1mb", "2mb", "100kb", "250kb", "500kb"]
+TOLS = [0, 1, 2]
+
+METHOD_OUTDIRS = [
+    "inferred_given_root",
+    "inferred_given_root_weighted",
+    "inferred_rf",
+    "inferred_rf_weighted",
+    "inferred_union",
+    "inferred_intersection",
+]
+
+
+def all_method_jsons():
+    files = []
+    for outdir in METHOD_OUTDIRS:
+        for kind in ("summary", "internal_novelty", "missing_tads"):
+            files += expand(
+                outdir + "/jsons/" + kind + "_chr{chr}_{res}_{l1}_{l2}_{tol}.json",
+                chr=CHRS,
+                res=RESOLUTIONS,
+                l1=LINE1,
+                l2=LINE2,
+                tol=TOLS,
+            )
+    return files
+
+
+rule all:
+    input:
+        "comparison_figures/.plots_done",
+
+
+rule plots:
+    input:
+        all_method_jsons(),
+    output:
+        touch("comparison_figures/.plots_done"),
+    shell:
+        "python plot_comparison.py"
+
+
+# ---------------------------------------------------------------- given_root
+rule infer_given_root:
+    input:
+        leaf1=lambda wc: f"{wc.l1}/chr{wc.chr}/{wc.res}/tads.tad",
+        leaf2=lambda wc: f"{wc.l2}/chr{wc.chr}/{wc.res}/tads.tad",
+    output:
+        "inferred_given_root/jsons/summary_chr{chr}_{res}_{l1}_{l2}_{tol}.json",
+    shell:
+        """
+        python check_intermediate_given_root.py \
+            {input.leaf1} {input.leaf2} \
+            --tolerance {wildcards.tol} \
+            --outdir inferred_given_root
+        """
+
+
+rule novelty_given_root:
+    input:
+        inferred_json="inferred_given_root/jsons/summary_chr{chr}_{res}_{l1}_{l2}_{tol}.json",
+    output:
+        "inferred_given_root/jsons/internal_novelty_chr{chr}_{res}_{l1}_{l2}_{tol}.json",
+    shell:
+        """
+        python analyze_internal_novel_tads.py \
+            --leaf1 {wildcards.l1} --leaf2 {wildcards.l2} \
+            --chrom {wildcards.chr} --resolution {wildcards.res} \
+            --tolerance {wildcards.tol} --outdir inferred_given_root \
+            --output {output}
+        """
+
+
+rule missing_given_root:
+    input:
+        inferred_json="inferred_given_root/jsons/summary_chr{chr}_{res}_{l1}_{l2}_{tol}.json",
+    output:
+        "inferred_given_root/jsons/missing_tads_chr{chr}_{res}_{l1}_{l2}_{tol}.json",
+    shell:
+        """
+        python analyze_missing_tads.py \
+            --leaf1 {wildcards.l1} --leaf2 {wildcards.l2} \
+            --chrom {wildcards.chr} --resolution {wildcards.res} \
+            --tolerance {wildcards.tol} --outdir inferred_given_root \
+            --output {output}
+        """
+
+
+# ------------------------------------------------------- given_root_weighted
+# Uses the "_updated" ILP (leaf-level RobusTAD TAD/boundary importance via
+# check_lp_constrained_weighted_updated.py), not the plain
+# check_intermediate_given_root_weighted.py (which only weights the CMP/MPP
+# ground-truth nodes). For the RobusTAD-based pipeline the "_updated" leaf
+# importance is the correct one to use.
+rule infer_given_root_weighted:
+    input:
+        leaf1=lambda wc: f"{wc.l1}/chr{wc.chr}/{wc.res}/tads.tad",
+        leaf2=lambda wc: f"{wc.l2}/chr{wc.chr}/{wc.res}/tads.tad",
+    output:
+        "inferred_given_root_weighted/jsons/summary_chr{chr}_{res}_{l1}_{l2}_{tol}.json",
+    shell:
+        """
+        python check_intermediate_given_root_weighted_updated.py \
+            {input.leaf1} {input.leaf2} \
+            --tolerance {wildcards.tol} \
+            --outdir inferred_given_root_weighted
+        """
+
+
+rule novelty_given_root_weighted:
+    input:
+        inferred_json="inferred_given_root_weighted/jsons/summary_chr{chr}_{res}_{l1}_{l2}_{tol}.json",
+    output:
+        "inferred_given_root_weighted/jsons/internal_novelty_chr{chr}_{res}_{l1}_{l2}_{tol}.json",
+    shell:
+        """
+        python analyze_internal_novel_tads.py \
+            --leaf1 {wildcards.l1} --leaf2 {wildcards.l2} \
+            --chrom {wildcards.chr} --resolution {wildcards.res} \
+            --tolerance {wildcards.tol} --outdir inferred_given_root_weighted \
+            --output {output}
+        """
+
+
+rule missing_given_root_weighted:
+    input:
+        inferred_json="inferred_given_root_weighted/jsons/summary_chr{chr}_{res}_{l1}_{l2}_{tol}.json",
+    output:
+        "inferred_given_root_weighted/jsons/missing_tads_chr{chr}_{res}_{l1}_{l2}_{tol}.json",
+    shell:
+        """
+        python analyze_missing_tads.py \
+            --leaf1 {wildcards.l1} --leaf2 {wildcards.l2} \
+            --chrom {wildcards.chr} --resolution {wildcards.res} \
+            --tolerance {wildcards.tol} --outdir inferred_given_root_weighted \
+            --output {output}
+        """
+
+
+# ------------------------------------------------------------------------ rf
+rule infer_rf:
+    input:
+        leaf1=lambda wc: f"{wc.l1}/chr{wc.chr}/{wc.res}/tads.tad",
+        leaf2=lambda wc: f"{wc.l2}/chr{wc.chr}/{wc.res}/tads.tad",
+    output:
+        "inferred_rf/jsons/summary_chr{chr}_{res}_{l1}_{l2}_{tol}.json",
+    shell:
+        """
+        python check_fitch_hartigan.py \
+            --leaf1 {input.leaf1} --leaf2 {input.leaf2} \
+            --tolerance {wildcards.tol} \
+            --outdir inferred_rf
+        """
+
+
+rule novelty_rf:
+    input:
+        inferred_json="inferred_rf/jsons/summary_chr{chr}_{res}_{l1}_{l2}_{tol}.json",
+    output:
+        "inferred_rf/jsons/internal_novelty_chr{chr}_{res}_{l1}_{l2}_{tol}.json",
+    shell:
+        """
+        python analyze_internal_novel_tads.py \
+            --leaf1 {wildcards.l1} --leaf2 {wildcards.l2} \
+            --chrom {wildcards.chr} --resolution {wildcards.res} \
+            --tolerance {wildcards.tol} --outdir inferred_rf \
+            --output {output}
+        """
+
+
+rule missing_rf:
+    input:
+        inferred_json="inferred_rf/jsons/summary_chr{chr}_{res}_{l1}_{l2}_{tol}.json",
+    output:
+        "inferred_rf/jsons/missing_tads_chr{chr}_{res}_{l1}_{l2}_{tol}.json",
+    shell:
+        """
+        python analyze_missing_tads.py \
+            --leaf1 {wildcards.l1} --leaf2 {wildcards.l2} \
+            --chrom {wildcards.chr} --resolution {wildcards.res} \
+            --tolerance {wildcards.tol} --outdir inferred_rf \
+            --output {output}
+        """
+
+
+# ---------------------------------------------------------------- rf_weighted
+rule infer_rf_weighted:
+    input:
+        leaf1=lambda wc: f"{wc.l1}/chr{wc.chr}/{wc.res}/tads.tad",
+        leaf2=lambda wc: f"{wc.l2}/chr{wc.chr}/{wc.res}/tads.tad",
+    output:
+        "inferred_rf_weighted/jsons/summary_chr{chr}_{res}_{l1}_{l2}_{tol}.json",
+    shell:
+        """
+        python check_fitch_hartigan_weighted.py \
+            --leaf1 {input.leaf1} --leaf2 {input.leaf2} \
+            --tolerance {wildcards.tol} \
+            --outdir inferred_rf_weighted
+        """
+
+
+rule novelty_rf_weighted:
+    input:
+        inferred_json="inferred_rf_weighted/jsons/summary_chr{chr}_{res}_{l1}_{l2}_{tol}.json",
+    output:
+        "inferred_rf_weighted/jsons/internal_novelty_chr{chr}_{res}_{l1}_{l2}_{tol}.json",
+    shell:
+        """
+        python analyze_internal_novel_tads.py \
+            --leaf1 {wildcards.l1} --leaf2 {wildcards.l2} \
+            --chrom {wildcards.chr} --resolution {wildcards.res} \
+            --tolerance {wildcards.tol} --outdir inferred_rf_weighted \
+            --output {output}
+        """
+
+
+rule missing_rf_weighted:
+    input:
+        inferred_json="inferred_rf_weighted/jsons/summary_chr{chr}_{res}_{l1}_{l2}_{tol}.json",
+    output:
+        "inferred_rf_weighted/jsons/missing_tads_chr{chr}_{res}_{l1}_{l2}_{tol}.json",
+    shell:
+        """
+        python analyze_missing_tads.py \
+            --leaf1 {wildcards.l1} --leaf2 {wildcards.l2} \
+            --chrom {wildcards.chr} --resolution {wildcards.res} \
+            --tolerance {wildcards.tol} --outdir inferred_rf_weighted \
+            --output {output}
+        """
+
+
+# --------------------------------------------------------------------- union
+rule infer_union:
+    input:
+        leaf1=lambda wc: f"{wc.l1}/chr{wc.chr}/{wc.res}/tads.tad",
+        leaf2=lambda wc: f"{wc.l2}/chr{wc.chr}/{wc.res}/tads.tad",
+    output:
+        "inferred_union/jsons/summary_chr{chr}_{res}_{l1}_{l2}_{tol}.json",
+    shell:
+        """
+        python check_intermediate_union.py \
+            {input.leaf1} {input.leaf2} \
+            --tolerance {wildcards.tol} \
+            --outdir inferred_union
+        """
+
+
+rule novelty_union:
+    input:
+        inferred_json="inferred_union/jsons/summary_chr{chr}_{res}_{l1}_{l2}_{tol}.json",
+    output:
+        "inferred_union/jsons/internal_novelty_chr{chr}_{res}_{l1}_{l2}_{tol}.json",
+    shell:
+        """
+        python analyze_internal_novel_tads.py \
+            --leaf1 {wildcards.l1} --leaf2 {wildcards.l2} \
+            --chrom {wildcards.chr} --resolution {wildcards.res} \
+            --tolerance {wildcards.tol} --outdir inferred_union \
+            --output {output}
+        """
+
+
+rule missing_union:
+    input:
+        inferred_json="inferred_union/jsons/summary_chr{chr}_{res}_{l1}_{l2}_{tol}.json",
+    output:
+        "inferred_union/jsons/missing_tads_chr{chr}_{res}_{l1}_{l2}_{tol}.json",
+    shell:
+        """
+        python analyze_missing_tads.py \
+            --leaf1 {wildcards.l1} --leaf2 {wildcards.l2} \
+            --chrom {wildcards.chr} --resolution {wildcards.res} \
+            --tolerance {wildcards.tol} --outdir inferred_union \
+            --output {output}
+        """
+
+
+# -------------------------------------------------------------- intersection
+rule infer_intersection:
+    input:
+        leaf1=lambda wc: f"{wc.l1}/chr{wc.chr}/{wc.res}/tads.tad",
+        leaf2=lambda wc: f"{wc.l2}/chr{wc.chr}/{wc.res}/tads.tad",
+    output:
+        "inferred_intersection/jsons/summary_chr{chr}_{res}_{l1}_{l2}_{tol}.json",
+    shell:
+        """
+        python check_intermediate_intersection.py \
+            {input.leaf1} {input.leaf2} \
+            --tolerance {wildcards.tol} \
+            --outdir inferred_intersection
+        """
+
+
+rule novelty_intersection:
+    input:
+        inferred_json="inferred_intersection/jsons/summary_chr{chr}_{res}_{l1}_{l2}_{tol}.json",
+    output:
+        "inferred_intersection/jsons/internal_novelty_chr{chr}_{res}_{l1}_{l2}_{tol}.json",
+    shell:
+        """
+        python analyze_internal_novel_tads.py \
+            --leaf1 {wildcards.l1} --leaf2 {wildcards.l2} \
+            --chrom {wildcards.chr} --resolution {wildcards.res} \
+            --tolerance {wildcards.tol} --outdir inferred_intersection \
+            --output {output}
+        """
+
+
+rule missing_intersection:
+    input:
+        inferred_json="inferred_intersection/jsons/summary_chr{chr}_{res}_{l1}_{l2}_{tol}.json",
+    output:
+        "inferred_intersection/jsons/missing_tads_chr{chr}_{res}_{l1}_{l2}_{tol}.json",
+    shell:
+        """
+        python analyze_missing_tads.py \
+            --leaf1 {wildcards.l1} --leaf2 {wildcards.l2} \
+            --chrom {wildcards.chr} --resolution {wildcards.res} \
+            --tolerance {wildcards.tol} --outdir inferred_intersection \
+            --output {output}
+        """

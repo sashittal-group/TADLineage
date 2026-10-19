@@ -1,0 +1,451 @@
+# Merge/split events between the embryo stage medians, and their biological annotation.
+#
+# Run from inside this folder:
+#     /Users/PSLabMonisha/miniforge3/envs/snakemake-tutorial/bin/snakemake --cores 4 -p
+#
+# The reference rule downloads about 110 MB the first time (refGene, the Deng et al. 2014
+# expression atlas and ENCODE CTCF peaks) and is skipped afterwards. Everything else is
+# quick: the whole grid of 360 runs takes a couple of minutes.
+
+PYTHON = "/Users/PSLabMonisha/miniforge3/envs/snakemake-tutorial/bin/python"
+
+PERMUTATIONS = 5000
+# positional tolerance when matching a call in one configuration to a call in another; the
+# same boundary lands a bin or two apart between sparse single-cell medians
+CONSENSUS_SLOP = 2000000
+# how far apart the two domains of a split or merge may be, in bins, for the event to count
+# as a single boundary appearing or disappearing
+MAX_GAP_BINS = 1
+# the same clustering run with OnTAD calls instead of RobusTAD, used as an independent
+# replication: a different TAD caller on the same cells. The grid is complete, 360 runs
+# over 3 bin sizes, 20 chromosomes and 6 tolerances, matching the RobusTAD grid.
+ONTAD_RUNS = ("/Users/PSLabMonisha/Desktop/tads/scptr_ontad/results_updated"
+              "/scptr_runs_all_cells")
+
+
+# The default target is the lean one: the two boundary results, the stage trajectory and
+# the three figures the report cites. The exploratory analyses that were tested and
+# rejected (enrichment, expression, consensus, chrx, profile, tolerance, candidates,
+# merge_split) are kept as rules and scripts but are no longer built by default, because
+# the report now quotes their outcomes rather than their tables. Ask for one by name:
+#     snakemake results/tolerance/ctcf_flank_sweep.tsv --cores 4
+rule all:
+    input:
+        "results/REPORT.md",
+        "results/figures/embryo_boundaries.png",
+        "results/figures/ctcf_boundaries.png",
+        "results/figures/merge_split.png",
+        "results/figures/ontad_merge_split.png",
+        "results/figures/robustad_merge_split.png",
+
+
+rule reference:
+    output:
+        genes="reference/mm10_genes.tsv",
+        expression="reference/deng2014_stage_expression.tsv",
+        ctcf="reference/ctcf_mesc_mm10.bed",
+    shell:
+        "{PYTHON} fetch_reference_data.py --with-ctcf"
+
+
+rule call_events:
+    # one sentinel per grid, since the script writes a tree of per-run tables
+    output:
+        touch("results/.events.done")
+    shell:
+        "{PYTHON} call_median_events.py --all"
+
+
+rule annotate:
+    input:
+        "results/.events.done",
+        genes="reference/mm10_genes.tsv",
+    output:
+        touch("results/.annotated.done")
+    shell:
+        "{PYTHON} annotate_events.py --all"
+
+
+rule enrichment:
+    input:
+        "results/.events.done",
+        genes="reference/mm10_genes.tsv",
+        expression="reference/deng2014_stage_expression.tsv",
+    output:
+        "results/enrichment/all_configurations_enrichment.tsv"
+    shell:
+        "{PYTHON} enrichment.py --all --permutations {PERMUTATIONS} "
+        "--max-gap-bins {MAX_GAP_BINS}"
+
+
+rule expression:
+    input:
+        "results/.events.done",
+        genes="reference/mm10_genes.tsv",
+        expression="reference/deng2014_stage_expression.tsv",
+    output:
+        "results/expression/all_configurations_contrasts.tsv"
+    shell:
+        "{PYTHON} expression_analysis.py --all --permutations {PERMUTATIONS} "
+        "--max-gap-bins {MAX_GAP_BINS}"
+
+
+rule ctcf:
+    input:
+        "results/.events.done",
+        ctcf="reference/ctcf_mesc_mm10.bed",
+    output:
+        "results/ctcf/ctcf_at_boundaries.tsv"
+    shell:
+        "{PYTHON} ctcf_analysis.py --max-gap-bins {MAX_GAP_BINS}"
+
+
+rule consensus:
+    input:
+        "results/.events.done",
+        genes="reference/mm10_genes.tsv",
+        expression="reference/deng2014_stage_expression.tsv",
+    output:
+        "results/consensus/consensus_events.tsv"
+    shell:
+        "{PYTHON} consensus_events.py --max-gap-bins {MAX_GAP_BINS}"
+
+
+rule chrx:
+    input:
+        "results/.events.done",
+        genes="reference/mm10_genes.tsv",
+    output:
+        "results/chrx/chrx_boundary_rates.tsv"
+    shell:
+        "{PYTHON} chrx_analysis.py"
+
+
+rule profile:
+    # CTCF and gene density as a function of distance from the call, which is what says
+    # whether the boundaries are jittered or precisely placed on quiet territory
+    input:
+        "results/.events.done",
+        genes="reference/mm10_genes.tsv",
+        ctcf="reference/ctcf_mesc_mm10.bed",
+    output:
+        "results/profile/boundary_profile.tsv"
+    shell:
+        "{PYTHON} boundary_profile.py --span 10 --max-gap-bins {MAX_GAP_BINS}"
+
+
+rule tolerance:
+    # what positional tolerance does to every test; slow, because it is the whole
+    # enrichment grid once per flank
+    input:
+        "results/.events.done",
+        genes="reference/mm10_genes.tsv",
+        expression="reference/deng2014_stage_expression.tsv",
+        ctcf="reference/ctcf_mesc_mm10.bed",
+    output:
+        ctcf="results/tolerance/ctcf_flank_sweep.tsv",
+        gradient="results/tolerance/ctcf_resolution_gradient.tsv",
+        genes_="results/tolerance/enrichment_flank_sweep.tsv",
+        nested="results/tolerance/enrichment_flank_nested_test.tsv",
+        loci="results/tolerance/consensus_slop_sweep.tsv",
+    shell:
+        "{PYTHON} tolerance_sweep.py --permutations {PERMUTATIONS} "
+        "--max-gap-bins {MAX_GAP_BINS}"
+
+
+rule candidates:
+    input:
+        "results/.events.done",
+        genes="reference/mm10_genes.tsv",
+        expression="reference/deng2014_stage_expression.tsv",
+    output:
+        "results/CANDIDATES.md",
+        "results/candidates.tsv",
+    shell:
+        "{PYTHON} candidate_loci.py --slop {CONSENSUS_SLOP} "
+        "--max-gap-bins {MAX_GAP_BINS}"
+
+
+rule tolerance_figure:
+    input:
+        "results/profile/boundary_profile.tsv",
+        "results/tolerance/ctcf_flank_sweep.tsv",
+        "results/tolerance/consensus_slop_sweep.tsv",
+    output:
+        "results/figures/tolerance.png"
+    shell:
+        "{PYTHON} plot_tolerance.py"
+
+
+rule stage_maturation:
+    # the stage medians scored on their own, rather than the differences between them:
+    # CTCF and gene density at each median's boundaries, stage by stage
+    input:
+        genes="reference/mm10_genes.tsv",
+        ctcf="reference/ctcf_mesc_mm10.bed",
+    output:
+        enrichment="results/stage/stage_boundary_enrichment.tsv",
+        trend="results/stage/stage_trend_tests.tsv",
+    shell:
+        "{PYTHON} stage_boundary_maturation.py --permutations {PERMUTATIONS}"
+
+
+rule boundary_anchor:
+    # whether a sharper anchor definition rescues the CTCF axis of the stage trajectory,
+    # and whether the 2-cell dip is about anchors or about active territory
+    output:
+        "results/anchor/boundary_anchor.tsv",
+        "results/anchor/anchor_dip_tests.tsv",
+    shell:
+        "{PYTHON} boundary_anchor_resolution.py --resolution 250kb "
+        "--permutations {PERMUTATIONS}"
+
+
+rule merge_split:
+    # merge and split boundaries against the other boundaries of the same medians, which
+    # is the comparison section 4 could not make, plus the curated sets at the loci
+    input:
+        "results/.events.done",
+        "results/candidates.tsv",
+        genes="reference/mm10_genes.tsv",
+        ctcf="reference/ctcf_mesc_mm10.bed",
+    output:
+        summary="results/merge_split/merge_split_summary.tsv",
+        context="results/merge_split/boundary_context.tsv",
+        loci="results/merge_split/locus_gene_sets.tsv",
+        events="results/merge_split/event_level_test.tsv",
+    shell:
+        "{PYTHON} merge_split_context.py --permutations {PERMUTATIONS} "
+        "--max-gap-bins {MAX_GAP_BINS}"
+
+
+rule ontad_events:
+    # the same median-to-median transformation on the OnTAD calls
+    output:
+        touch("results/.events_ontad.done")
+    shell:
+        "{PYTHON} call_median_events.py --all --run-dir {ONTAD_RUNS} "
+        "--out-dir results/events_ontad"
+
+
+rule ontad_candidates:
+    input:
+        "results/.events_ontad.done",
+        genes="reference/mm10_genes.tsv",
+        expression="reference/deng2014_stage_expression.tsv",
+    output:
+        "results/ontad_candidates/candidates.tsv",
+    shell:
+        "{PYTHON} candidate_loci.py --events-dir results/events_ontad "
+        "--out-dir results/ontad_candidates --slop {CONSENSUS_SLOP} "
+        "--max-gap-bins {MAX_GAP_BINS}"
+
+
+rule ontad_stage:
+    input:
+        genes="reference/mm10_genes.tsv",
+        ctcf="reference/ctcf_mesc_mm10.bed",
+    output:
+        enrichment="results/stage_ontad/stage_boundary_enrichment.tsv",
+        trend="results/stage_ontad/stage_trend_tests.tsv",
+    shell:
+        "{PYTHON} stage_boundary_maturation.py --run-dir {ONTAD_RUNS} "
+        "--out-dir results/stage_ontad --permutations {PERMUTATIONS}"
+
+
+rule ontad_merge_split:
+    input:
+        "results/.events_ontad.done",
+        candidates="results/ontad_candidates/candidates.tsv",
+        genes="reference/mm10_genes.tsv",
+        ctcf="reference/ctcf_mesc_mm10.bed",
+    output:
+        summary="results/merge_split_ontad/merge_split_summary.tsv",
+        events="results/merge_split_ontad/event_level_test.tsv",
+    shell:
+        "{PYTHON} merge_split_context.py --run-dir {ONTAD_RUNS} "
+        "--events-dir results/events_ontad "
+        "--candidates results/ontad_candidates/candidates.tsv "
+        "--out-dir results/merge_split_ontad --permutations {PERMUTATIONS} "
+        "--max-gap-bins {MAX_GAP_BINS}"
+
+
+rule ctcf_ontad:
+    # the OnTAD counterpart of rule ctcf; boundary_turnover.py reads both tables
+    input:
+        "results/.events_ontad.done",
+        ctcf="reference/ctcf_mesc_mm10.bed",
+    output:
+        "results/ctcf_ontad/ctcf_at_boundaries.tsv"
+    shell:
+        "{PYTHON} ctcf_analysis.py --events-dir results/events_ontad "
+        "--out-dir results/ctcf_ontad --max-gap-bins {MAX_GAP_BINS}"
+
+
+rule cross_caller:
+    # are the merge and split loci of one caller the merge and split loci of the other?
+    input:
+        "results/.events.done",
+        "results/.events_ontad.done",
+    output:
+        "results/turnover/cross_caller.tsv"
+    shell:
+        "{PYTHON} cross_caller_loci.py --permutations {PERMUTATIONS} "
+        "--max-gap-bins {MAX_GAP_BINS}"
+
+
+rule result_figures:
+    # the two single-panel figures the paper carries; --all-panels adds the supporting ones
+    input:
+        classes="results/turnover/boundary_classes.tsv",
+        turnover="results/turnover/boundary_turnover.tsv",
+    output:
+        "results/figures/ctcf_boundaries.png",
+        "results/figures/merge_split.png",
+    shell:
+        "{PYTHON} plot_boundary_results.py"
+
+
+rule main_figure:
+    # the 2x2 the paper carries: the stage trajectory on top, the boundary classes below,
+    # composed from the same panel functions as the standalone figures
+    input:
+        classes="results/turnover/boundary_classes.tsv",
+        robustad="results/stage/stage_boundary_enrichment.tsv",
+        ontad="results/stage_ontad/stage_boundary_enrichment.tsv",
+    output:
+        "results/figures/embryo_boundaries.png",
+    shell:
+        "{PYTHON} plot_main_figure.py"
+
+
+rule turnover:
+    # the one contrast that survives a change of TAD caller: reorganised boundaries
+    # against the stable boundaries of the same medians
+    input:
+        "results/.events.done",
+        "results/.events_ontad.done",
+        "results/ctcf/ctcf_at_boundaries.tsv",
+        "results/ctcf_ontad/ctcf_at_boundaries.tsv",
+        ctcf="reference/ctcf_mesc_mm10.bed",
+        genes="reference/mm10_genes.tsv",
+    output:
+        turnover="results/turnover/boundary_turnover.tsv",
+        classes="results/turnover/boundary_classes.tsv",
+    shell:
+        "{PYTHON} boundary_turnover.py --events "
+        "RobusTAD=results/events OnTAD=results/events_ontad"
+
+
+rule boundary_gene_activity:
+    # what is at a reorganised boundary: which genes, and whether the two callers agree on
+    # where the reorganisation is. Both come out null and both are quoted in the report.
+    input:
+        "results/.events.done",
+        "results/.events_ontad.done",
+        genes="reference/mm10_genes.tsv",
+        expression="reference/deng2014_stage_expression.tsv",
+    output:
+        activity="results/activity/boundary_gene_activity.tsv",
+        loci="results/activity/reorganised_locus_overlap.tsv",
+    shell:
+        "{PYTHON} boundary_gene_activity.py --permutations {PERMUTATIONS}"
+
+
+rule merge_split_validation:
+    # one caller at a time: every merge/split bin scored against the cells that caller's
+    # own runs never saw, with an empirical null from the chromosome's own bins
+    input:
+        events=lambda w: ("results/.events.done" if w.caller == "RobusTAD"
+                          else "results/.events_ontad.done"),
+    output:
+        loci="results/merge_split/{caller}/locus_validation.tsv",
+    wildcard_constraints:
+        caller="RobusTAD|OnTAD",
+    shell:
+        "{PYTHON} merge_split_locus_validation.py --caller {wildcards.caller}"
+
+
+rule merge_split_class:
+    input:
+        loci="results/merge_split/{caller}/locus_validation.tsv",
+    output:
+        summary="results/merge_split/{caller}/class_summary.tsv",
+    wildcard_constraints:
+        caller="RobusTAD|OnTAD",
+    shell:
+        "{PYTHON} merge_split_class_summary.py --caller {wildcards.caller}"
+
+
+rule merge_split_clusters:
+    # curated gene sets at merge/split domains, counted by cluster rather than by gene
+    input:
+        events=lambda w: ("results/.events.done" if w.caller == "RobusTAD"
+                          else "results/.events_ontad.done"),
+        genes="reference/mm10_genes.tsv",
+    output:
+        clusters="results/merge_split/{caller}/cluster_enrichment.tsv",
+    wildcard_constraints:
+        caller="RobusTAD|OnTAD",
+    shell:
+        "{PYTHON} merge_split_cluster_enrichment.py --caller {wildcards.caller}"
+
+
+# the figure name lower-cases the caller, which a single wildcard cannot express, so the
+# two rules are spelled out rather than generated -- see the dynamic-rule gotcha in the repo README.md
+rule merge_split_figure_robustad:
+    input:
+        loci="results/merge_split/RobusTAD/locus_validation.tsv",
+        summary="results/merge_split/RobusTAD/class_summary.tsv",
+        clusters="results/merge_split/RobusTAD/cluster_enrichment.tsv",
+    output:
+        "results/figures/robustad_merge_split.png",
+    shell:
+        "{PYTHON} plot_merge_split_validation.py --caller RobusTAD"
+
+
+rule merge_split_figure_ontad:
+    input:
+        loci="results/merge_split/OnTAD/locus_validation.tsv",
+        summary="results/merge_split/OnTAD/class_summary.tsv",
+        clusters="results/merge_split/OnTAD/cluster_enrichment.tsv",
+    output:
+        "results/figures/ontad_merge_split.png",
+    shell:
+        "{PYTHON} plot_merge_split_validation.py --caller OnTAD"
+
+
+rule report:
+    # only the tables the report still quotes. The rejected analyses are summarised from
+    # their outcomes rather than their tables, so their rules are no longer inputs here;
+    # ask for one by name if you want to rebuild it.
+    input:
+        "results/.events.done",
+        "results/turnover/boundary_classes.tsv",
+        "results/turnover/boundary_turnover.tsv",
+        "results/turnover/cross_caller.tsv",
+        "results/stage/stage_boundary_enrichment.tsv",
+        "results/stage/stage_trend_tests.tsv",
+        "results/stage_ontad/stage_boundary_enrichment.tsv",
+        "results/stage_ontad/stage_trend_tests.tsv",
+        "results/anchor/boundary_anchor.tsv",
+        "results/anchor/anchor_dip_tests.tsv",
+        "results/activity/boundary_gene_activity.tsv",
+        "results/activity/reorganised_locus_overlap.tsv",
+        "results/merge_split/OnTAD/class_summary.tsv",
+        "results/merge_split/OnTAD/cluster_enrichment.tsv",
+        "results/merge_split/RobusTAD/class_summary.tsv",
+        "results/merge_split/RobusTAD/cluster_enrichment.tsv",
+    output:
+        "results/REPORT.md"
+    shell:
+        "{PYTHON} summarise_results.py"
+
+
+rule figure:
+    input:
+        "results/REPORT.md"
+    output:
+        "results/figures/summary.png"
+    shell:
+        "{PYTHON} plot_summary.py"

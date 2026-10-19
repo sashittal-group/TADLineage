@@ -6,9 +6,10 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-
-RESULTS_DIR = Path(__file__).resolve().parent / "results"
+ROOT = Path(__file__).resolve().parent
+RESULTS_DIR = ROOT / "results_updated"
 RUN_DIR = RESULTS_DIR / "scptr_runs_all_cells"
+RESOLUTIONS = ["250kb", "500kb", "1000kb"]
 
 
 def resolution_key(resolution):
@@ -21,6 +22,8 @@ def resolution_key(resolution):
 
 
 def chrom_key(chromosome):
+    if chromosome == "all":
+        return 25
     label = chromosome.replace("chr", "")
     if label == "X":
         return 23
@@ -38,7 +41,14 @@ def average(values):
 
 def collect_rows():
     rows = []
-    for json_path in sorted(RUN_DIR.glob("*kb/chr*/tol_*.json")):
+    for json_path in sorted(
+        RUN_DIR.glob("*kb/*/tol_*.json"),
+        key=lambda path: (
+            resolution_key(path.parents[1].name),
+            chrom_key(path.parent.name),
+            path.name,
+        ),
+    ):
         with json_path.open() as handle:
             data = json.load(handle)
 
@@ -48,13 +58,15 @@ def collect_rows():
         if tolerance is None:
             tolerance = json_path.stem.replace("tol_", "")
 
+        ari = float(data["ARI"])
+
         rows.append(
             {
                 "resolution": resolution,
                 "resolution_bp": resolution_key(resolution),
                 "chromosome": chromosome,
                 "tolerance": tolerance,
-                "ari": float(data["ARI"]),
+                "ari": ari,
                 "path": json_path,
             }
         )
@@ -81,17 +93,17 @@ def write_summary(rows, fig_dir):
 
 
 def plot_by_resolution(rows, fig_dir):
-    resolutions = sorted({row["resolution"] for row in rows}, key=resolution_key)
     by_resolution = []
-    for resolution in resolutions:
+    for resolution in RESOLUTIONS:
         values = [row["ari"] for row in rows if row["resolution"] == resolution]
-        by_resolution.append((resolution, average(values)))
+        if values:
+            by_resolution.append((resolution, average(values)))
 
     fig, ax = plt.subplots(figsize=(6, 4), constrained_layout=True)
     x_values = [item[0] for item in by_resolution]
     y_values = [item[1] for item in by_resolution]
     ax.scatter(x_values, y_values, s=90, color="#2F6F9F", zorder=3)
-    ax.set_title("scPTR ARI by Resolution")
+    ax.set_title("Our Method ARI by Resolution")
     ax.set_xlabel("Resolution")
     ax.set_ylabel("Average ARI")
     ax.set_ylim(0, max(0.01, max(y_values) * 1.20))
@@ -107,6 +119,40 @@ def plot_by_resolution(rows, fig_dir):
     plt.close(fig)
 
 
+def plot_by_resolution_all_chr(rows, fig_dir):
+    by_resolution = []
+    for resolution in RESOLUTIONS:
+        values = [
+            row["ari"]
+            for row in rows
+            if row["resolution"] == resolution and row["chromosome"] == "all"
+        ]
+        if values:
+            by_resolution.append((resolution, average(values)))
+
+    if not by_resolution:
+        return
+
+    fig, ax = plt.subplots(figsize=(6, 4), constrained_layout=True)
+    x_values = [item[0] for item in by_resolution]
+    y_values = [item[1] for item in by_resolution]
+    ax.scatter(x_values, y_values, s=90, color="#2F6F9F", zorder=3)
+    ax.set_title("Our Method ARI by Resolution, All Chromosomes")
+    ax.set_xlabel("Resolution")
+    ax.set_ylabel("Average ARI")
+    ax.set_ylim(0, max(0.01, max(y_values) * 1.20))
+    for x_value, y_value in by_resolution:
+        ax.annotate(
+            f"{y_value:.3f}",
+            (x_value, y_value),
+            textcoords="offset points",
+            xytext=(0, 8),
+            ha="center",
+        )
+    fig.savefig(fig_dir / "ari_by_res_all_chr.png", dpi=300)
+    plt.close(fig)
+
+
 def plot_by_chromosome(rows, fig_dir):
     chromosomes = sorted({row["chromosome"] for row in rows}, key=chrom_key)
     by_chromosome = []
@@ -118,7 +164,7 @@ def plot_by_chromosome(rows, fig_dir):
     x_values = [item[0] for item in by_chromosome]
     y_values = [item[1] for item in by_chromosome]
     ax.scatter(x_values, y_values, s=55, color="#2F6F9F", zorder=3)
-    ax.set_title("scPTR ARI by Chromosome")
+    ax.set_title("Our Method ARI by Chromosome")
     ax.set_xlabel("Chromosome")
     ax.set_ylabel("Average ARI")
     ax.set_ylim(0, max(0.01, max(y_values) * 1.20))
@@ -147,6 +193,7 @@ def main():
 
     summary_path = write_summary(rows, fig_dir)
     plot_by_resolution(rows, fig_dir)
+    plot_by_resolution_all_chr(rows, fig_dir)
     plot_by_chromosome(rows, fig_dir)
 
     print(f"Wrote {summary_path}")

@@ -1,0 +1,25 @@
+"""
+Large parsimony on the hematopoietic quartet -- RobusTAD calls, weighted.
+
+Leaves: hemato_cells/using_robustad/<NODE>/chr<C>/<RES>/tads.tad (RobusTAD). Importance
+term of hemato_cells/using_robustad/check_intermediate_given_root_weighted_updated.py:
+RobusTAD TAD and boundary scores of CLP, leaf1 and leaf2 (robustad_predictions/,
+tads_all, weight 0.1) reward the leaf's parent for keeping them; LT gets no scores,
+as in that pipeline. Counterpart of
+hemato_cells/using_robustad/check_intermediate_snakemake_given_root_weighted.
+Rules: ../quartet_rules.smk. Run from this folder:
+
+    nohup caffeinate -is /Users/PSLabMonisha/miniforge3/envs/snakemake-tutorial/bin/snakemake \
+        --cores 8 -p --rerun-incomplete --keep-going > snakemake_run.log 2>&1 &
+"""
+
+DATA_DIR = "../../using_robustad"
+WEIGHTING = "robustad_weighted"
+
+
+rule all:
+    input:
+        "results/best_tolerance/best_tolerance_summary.txt",
+
+
+include: "../quartet_rules.smk"

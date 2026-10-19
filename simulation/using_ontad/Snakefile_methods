@@ -1,0 +1,71 @@
+N_INSTANCES = 100
+NODES = ["root", "A", "B", "C", "D", "E", "F", "G"]
+METHODS = [
+    "inferred_given_root",
+    "inferred_given_root_weighted",
+    "inferred_intersection",
+    "inferred_rf",
+    "inferred_rf_weighted",
+    "inferred_union",
+]
+SCORE_NODES = ["A", "B", "C"]
+
+PYTHON = "/Users/PSLabMonisha/miniforge3/envs/snakemake-tutorial/bin/python"
+DATA_DIR = "../data"
+RESULTS_DIR = "method_results"
+PLOTS_DIR = "method_plots"
+TOLERANCE = 2
+
+
+wildcard_constraints:
+    idx=r"\d{3}",
+    method="|".join(METHODS)
+
+
+rule all:
+    input:
+        expand(
+            RESULTS_DIR + "/{method}/jsons/region_{idx:03d}.json",
+            method=METHODS,
+            idx=range(N_INSTANCES),
+        ),
+        PLOTS_DIR + "/method_metrics_long.csv",
+        PLOTS_DIR + "/method_metrics_summary.csv",
+        PLOTS_DIR + "/internal_nodes_f1_boxplot.png"
+
+
+rule infer_region_method:
+    input:
+        expand(DATA_DIR + "/region_{{idx}}/ontad/{node}.tad", node=NODES)
+    output:
+        RESULTS_DIR + "/{method}/jsons/region_{idx}.json"
+    log:
+        "logs/methods/{method}_region_{idx}.log"
+    shell:
+        "{PYTHON} run_simulation_methods.py "
+        "--data-dir {DATA_DIR} "
+        "--region-index {wildcards.idx} "
+        "--method {wildcards.method} "
+        "--outdir {RESULTS_DIR}/{wildcards.method} "
+        "--tolerance {TOLERANCE} "
+        "> {log} 2>&1"
+
+
+rule plot_methods:
+    input:
+        expand(
+            RESULTS_DIR + "/{method}/jsons/region_{idx:03d}.json",
+            method=METHODS,
+            idx=range(N_INSTANCES),
+        )
+    output:
+        long_csv=PLOTS_DIR + "/method_metrics_long.csv",
+        summary_csv=PLOTS_DIR + "/method_metrics_summary.csv",
+        plot=PLOTS_DIR + "/internal_nodes_f1_boxplot.png"
+    log:
+        "logs/methods/plot_methods.log"
+    shell:
+        "{PYTHON} plot_simulation_methods.py "
+        "--results-dir {RESULTS_DIR} "
+        "--outdir {PLOTS_DIR} "
+        "> {log} 2>&1"

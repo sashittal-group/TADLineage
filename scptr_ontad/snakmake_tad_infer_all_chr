@@ -1,0 +1,45 @@
+import sys
+
+
+PYTHON = sys.executable
+
+RESOLUTIONS = config.get("resolutions", ["500kb"])
+STAGES = config.get("stages", ["1-cell", "2-cell", "4-cell", "8-cell", "64-cell"])
+INPUT_BASE = config.get("input_base", "../scptr/cell_differentiation")
+OUTPUT_BASE = config.get("output_base", "results_updated/scptr_merged_all_chr")
+GENOME_SIZES = config.get("genome_sizes", "../genome.chrom.sizes")
+ONTAD_BIN = config.get("ontad_bin", "../OnTAD/OnTAD/src/OnTAD")
+PENALTY = config.get("penalty", 0.1)
+TIMEOUT = config.get("timeout", 600)
+KEEP_MATRIX = bool(config.get("keep_matrix", False))
+
+
+rule all:
+    input:
+        expand(
+            f"{OUTPUT_BASE}/{{resolution}}/_complete.txt",
+            resolution=RESOLUTIONS,
+        )
+
+
+rule infer_genomewide_ontad:
+    output:
+        complete=f"{OUTPUT_BASE}/{{resolution}}/_complete.txt"
+    log:
+        "logs_updated/genomewide_ontad/{resolution}.log"
+    params:
+        keep_matrix=lambda wildcards: "--keep-matrix" if KEEP_MATRIX else "",
+        stages=lambda wildcards: " ".join(STAGES),
+    shell:
+        "{PYTHON} merge_ontad_genomewide.py "
+        "--input-base {INPUT_BASE} "
+        "--output-base {OUTPUT_BASE} "
+        "--ontad-bin {ONTAD_BIN} "
+        "--genome-sizes {GENOME_SIZES} "
+        "--resolution {wildcards.resolution} "
+        "--stages {params.stages} "
+        "--penalty {PENALTY} "
+        "--timeout {TIMEOUT} "
+        "{params.keep_matrix} "
+        "--complete-out {output.complete} "
+        "> {log} 2>&1"
