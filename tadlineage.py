@@ -11,6 +11,9 @@ One entry point for the three problems of the paper, on any input:
   large   Large parsimony: given only the observed TAD hierarchies, infer the tree
           and the hierarchies of its internal vertices (integer linear program,
           Gurobi).
+  mergesplit
+          TAD merge and split events between two hierarchies, or along every
+          edge of a tree (tad_sequence.transform_sequence, maximum flow).
 
 TAD files have one TAD per line, "start end ..." in 1-based bin indices (OnTAD .tad
 output works as-is; extra columns are ignored). Every input must use the same
@@ -20,6 +23,7 @@ Examples:
   python tadlineage.py small --tree tree.txt --tads LT=LT.tad CLP=CLP.tad MK=MK.tad G=G.tad --tolerance 1 --out out_small
   python tadlineage.py median --tads cell1.tad cell2.tad cell3.tad --out out_median
   python tadlineage.py large --tads LT=LT.tad CLP=CLP.tad MK=MK.tad G=G.tad --tolerance 1 --out out_large
+  python tadlineage.py mergesplit --tree tree.txt --dir out_small --out out_events
 """
 
 import argparse
@@ -131,10 +135,16 @@ def edge_report(edges, tads):
     return report
 
 
-def write_outputs(out, tads, inferred, summary):
+def write_outputs(out, tads, inferred, summary, edges=None):
+    """Write <name>.tad for every inferred vertex; with edges (a tree), also write
+    the observed vertices (as used by the solver) and tree_edges.txt, so the
+    folder holds the whole labeled tree (input for `mergesplit --tree`)."""
     out.mkdir(parents=True, exist_ok=True)
-    for name in inferred:
+    names = list(tads) if edges is not None else list(inferred)
+    for name in names:
         write_tads_to_file(as_tuples(tads[name]), str(out / f"{name}.tad"))
+    if edges is not None:
+        (out / "tree_edges.txt").write_text("".join(f"{u} {v}\n" for u, v in edges))
     (out / "summary.json").write_text(json.dumps(summary, indent=2))
     print(f"Wrote {len(inferred)} inferred hierarchies and summary.json to {out}/")
 
@@ -197,7 +207,7 @@ def cmd_small(args):
         "edges": edge_report(edges, tads),
     }
     print(f"Cost {cost:g}")
-    write_outputs(out, tads, inferred, summary)
+    write_outputs(out, tads, inferred, summary, edges=edges)
 
 
 def cmd_median(args):
@@ -272,7 +282,69 @@ def cmd_large(args):
     (out / "tree.nwk").parent.mkdir(parents=True, exist_ok=True)
     (out / "tree.nwk").write_text(newick + "\n")
     print(f"Cost {res['cost']:g}; tree {newick}")
-    write_outputs(out, tads, inferred, summary)
+    write_outputs(out, tads, inferred, summary, edges=edges)
+
+
+def merge_split_events(source, target, tolerance=0):
+    """Merge and split events from source to target with tad_sequence.transform_sequence,
+    the implementation used for the DiffDomain and TADsplimer comparisons
+    (hemato_cells/diffdomainanalysis_updated/, hemato_cells/tadsplimer/): remove shared
+    TADs, enumerate candidate splits (a,b) -> {(a,x),(y,b)} and merges
+    {(a,x),(y,b)} -> (a,b) with x <= y, select disjoint events by maximum flow, and
+    count the remaining changed TADs as deletions and insertions. TADs and outer
+    boundaries within `tolerance` bins are treated as equal."""
+    from tad_sequence import transform_sequence
+
+    ops, _, _ = transform_sequence(sorted(as_tuples(source)), sorted(as_tuples(target)),
+                                   Ct=1.0, Cb=1.0, tolerance=tolerance)
+    events = []
+    counts = {"split": 0, "merge": 0, "delete": 0, "insert": 0}
+    for op in ops:
+        kind = op.get("op")
+        if kind in counts:
+            counts[kind] += 1
+        if kind == "split":
+            events.append(("split", [op["source"]], list(op["targets"])))
+        elif kind == "merge":
+            events.append(("merge", list(op["sources"]), [op["target"]]))
+    return events, counts
+
+
+def cmd_mergesplit(args):
+    def fmt(tads):
+        return ";".join(f"[{a},{b}]" for a, b in tads)
+
+    if args.tree:
+        if not args.dir or args.source or args.target:
+            raise SystemExit("Use --tree with --dir (or --source with --target).")
+        edges, _ = read_tree(args.tree)
+        files = {v: Path(args.dir) / f"{v}.tad" for e in edges for v in e}
+        missing = sorted(v for v, f in files.items() if not f.is_file())
+        if missing:
+            raise SystemExit(f"No <name>.tad in {args.dir} for: {missing}")
+    else:
+        if not (args.source and args.target) or args.dir:
+            raise SystemExit("Give --source and --target (or --tree with --dir).")
+        named = parse_named_tads([args.source, args.target], require_names=False)
+        (src, tgt), files = list(named), {k: Path(v) for k, v in named.items()}
+        edges = [(src, tgt)]
+
+    out = Path(args.out)
+    out.mkdir(parents=True, exist_ok=True)
+    tads = {v: read_tad_intervals(str(f)) for v, f in files.items()}
+    rows, per_edge = [], []
+    for u, v in edges:
+        events, counts = merge_split_events(tads[u], tads[v], args.tolerance)
+        rows += [f"{u}\t{v}\t{kind}\t{fmt(s)}\t{fmt(t)}\n" for kind, s, t in events]
+        per_edge.append({"source": u, "target": v, "splits": counts["split"],
+                         "merges": counts["merge"], "other_deleted_tads": counts["delete"],
+                         "other_inserted_tads": counts["insert"]})
+        print(f"{u} -> {v}: {counts['split']} splits, {counts['merge']} merges "
+              f"(outside events: {counts['delete']} TADs deleted, {counts['insert']} inserted)")
+    (out / "events.tsv").write_text("source\ttarget\tevent\tsource_tads\ttarget_tads\n" + "".join(rows))
+    (out / "summary.json").write_text(json.dumps(
+        {"problem": "merge_split", "tolerance": args.tolerance, "edges": per_edge}, indent=2))
+    print(f"Wrote events.tsv and summary.json to {out}/")
 
 
 # ----------------------------------------------------------------------------- main
@@ -310,6 +382,17 @@ def main():
     g.add_argument("--threads", type=int, default=None)
     g.add_argument("--time-limit", type=float, default=None, help="seconds")
     g.set_defaults(func=cmd_large)
+
+    ms = sub.add_parser("mergesplit", help="largest consistent set of TAD merges and splits")
+    ms.add_argument("--source", help="source hierarchy (.tad, or NAME=path)")
+    ms.add_argument("--target", help="target hierarchy (.tad, or NAME=path)")
+    ms.add_argument("--tree", help="edge list; run on every edge, reading <name>.tad from --dir")
+    ms.add_argument("--dir", help="folder with one <name>.tad per tree vertex (e.g. the --out of small or large)")
+    ms.add_argument("--tolerance", type=int, default=0,
+                    help="bins within which TADs count as shared and event boundaries as "
+                         "equal, as in the DiffDomain/TADsplimer comparisons (default 0)")
+    ms.add_argument("--out", required=True, help="output directory")
+    ms.set_defaults(func=cmd_mergesplit)
 
     args = p.parse_args()
     args.func(args)

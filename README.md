@@ -23,15 +23,16 @@ From the TAD hierarchies of observed cell states, TADLineage solves three proble
 - **(d) Large parsimony.** Infer the differentiation tree itself together with the ancestral hierarchies,
   also NP-hard and solved exactly with an integer linear program.
 
-**(e)** TADLineage also identifies a largest consistent set of TAD **merge** and **split** events
-between two hierarchies, by reduction to maximum flow.
+**(e)** TADLineage also identifies a consistent set of TAD **merge** and **split** events between two
+hierarchies, in which no TAD takes part in two events, using maximum flow.
 
 The repository contains code only. Hi-C data, TAD calls, intermediate results and figures are not
 included.
 
 ## Quick start
 
-`tadlineage.py` runs the median, small parsimony and large parsimony on any input. It needs Python with
+`tadlineage.py` runs the median, small parsimony, large parsimony and merge–split identification on any
+input. It needs Python with
 `gurobipy` and a Gurobi license (see [Requirements](#requirements)).
 
 **1. Call TADs from the Hi-C of each cell state.** Any caller that writes one TAD per line as
@@ -60,7 +61,8 @@ python tadlineage.py small --tree tree.txt \
     --tads LT=LT/chr19/1mb/tads.tad CLP=CLP/chr19/1mb/tads.tad \
            MK=MK/chr19/1mb/tads.tad G=G/chr19/1mb/tads.tad \
     --tolerance 1 --out out_small
-# -> out_small/MPP.tad, out_small/CMP.tad, out_small/summary.json
+# -> out_small/MPP.tad, out_small/CMP.tad (inferred), the observed hierarchies as used by the solver,
+#    tree_edges.txt and summary.json
 ```
 
 **2b. Median of a set of hierarchies**, for example cells of one cluster or replicates of one cell type:
@@ -81,10 +83,32 @@ python tadlineage.py large \
     --tads LT=LT/chr19/1mb/tads.tad CLP=CLP/chr19/1mb/tads.tad \
            MK=MK/chr19/1mb/tads.tad G=G/chr19/1mb/tads.tad \
     --outgroup LT --tolerance 1 --out out_large
-# -> out_large/tree.nwk, e.g. (((G,MK)N5,CLP)N6,LT)root;  plus N5.tad, N6.tad, root.tad, summary.json
+# -> out_large/tree.nwk, e.g. (((G,MK)N5,CLP)N6,LT)root;  plus N5.tad, N6.tad, root.tad,
+#    the observed hierarchies, tree_edges.txt and summary.json
 ```
 
-**Options shared by all three:**
+**3. Merge and split events.** Find the TAD merges and splits between a source and a target
+hierarchy, either for one pair or along every edge of a tree, for example the tree reconstructed in
+step 2a or 2c:
+
+```bash
+# every edge of the reconstructed tree (parent = source, child = target)
+python tadlineage.py mergesplit --tree out_small/tree_edges.txt --dir out_small --out out_events
+
+# one pair of hierarchies
+python tadlineage.py mergesplit --source CMP/chr19/1mb/tads.tad --target MK/chr19/1mb/tads.tad \
+    --tolerance 1 --out out_pair
+# -> events.tsv (source, target, split/merge, source TADs, target TADs) and summary.json (counts per edge)
+```
+
+A split turns a source TAD `(a,b)` into two target TADs `(a,x)` and `(y,b)` with `x ≤ y`; a merge does
+the reverse. Disjoint events are selected by maximum flow, and the remaining changed TADs are counted
+as deletions and insertions. For `mergesplit`, `--tolerance N` (default 0) is the number of bins within
+which TADs count as shared and event boundaries as equal. This is the implementation used for the
+DiffDomain and TADsplimer comparisons (`hemato_cells/diffdomainanalysis_updated/`,
+`hemato_cells/tadsplimer/`).
+
+**Options of `small`, `median` and `large`:**
 
 | Option | Meaning |
 |---|---|
@@ -106,7 +130,8 @@ variants and the baselines of the paper.
 
 | File | Purpose |
 |---|---|
-| `tadlineage.py` | Command-line entry point (`small`, `median`, `large`) on any tree and TAD files; see [Quick start](#quick-start). |
+| `tadlineage.py` | Command-line entry point (`small`, `median`, `large`, `mergesplit`) on any tree and TAD files; see [Quick start](#quick-start). |
+| `tad_sequence.py` | `transform_sequence`: merge and split events between two hierarchies (used by `mergesplit` and the DiffDomain/TADsplimer comparisons). |
 | `check_lp_constrained.py` | Small parsimony integer linear program: minimizes TAD changes (`Ct`) plus boundary changes (`Cb`) over the tree edges, with laminarity constraints on the internal nodes. Supports a pinned root, restricting candidate TADs, and imputation at observed nodes. |
 | `check_lp_constrained_weighted.py` | The same program with a per-node importance term (used with OnTAD calls). |
 | `check_lp_constrained_weighted_updated.py` | Boundary-aware variant that uses per-TAD and per-boundary scores (used with RobusTAD calls). |
