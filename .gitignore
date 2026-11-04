@@ -151,3 +151,6 @@ dcHiC/
 diffDomain/
 schiccluster_scptr/scHiCluster/
 simulation/tgif_benchmark/tgif/
+
+# README figures (exception to the *.png rule above)
+!docs/*.png

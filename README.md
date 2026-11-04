@@ -3,19 +3,102 @@
 > **Draft README.** Paths, environment names and run instructions reflect the development machine and
 > will be generalized before release.
 
-This repository holds the code for TADLineage, a set of algorithms for comparing and reconstructing
-hierarchies of topologically associating domains (TADs) across related cell states. Given the TADs
-called at the observed cell states of a tree (a differentiation lineage, a phylogeny, or a simulated
-tree), TADLineage
+![Overview of TADLineage](docs/overview.png)
 
-- reconstructs the TAD hierarchies of the unobserved ancestral cell states under a parsimony objective
-  (small parsimony),
-- infers the tree itself from the observed TAD hierarchies (large parsimony),
-- computes median TAD hierarchies and clusters single cells by their TAD hierarchies, and
-- identifies a largest consistent set of TAD merge and split events between two hierarchies by maximum flow.
+## Overview
+
+TADLineage models how hierarchies of topologically associating domains (TADs) reorganize as cells
+differentiate. **(a)** A TAD hierarchy $H = (T, L, R)$, called from a Hi-C contact map, is represented
+by its TADs $T$, their left boundaries $L$ and their right boundaries $R$. Reorganization is a series
+of insertions and deletions of TADs and boundaries. The **TAD distance** $d(H, H')$ counts the TADs,
+left boundaries and right boundaries present in only one of two hierarchies, and it is a metric.
+
+From the TAD hierarchies of observed cell states, TADLineage solves three problems under this distance:
+
+- **(b) Median.** Find one TAD hierarchy at minimum total distance from a set of hierarchies, with a
+  polynomial-time dynamic program. Used as the cluster centre when clustering single cells.
+- **(c) Small parsimony.** Given a cell differentiation tree, infer the TAD hierarchies of its unobserved
+  (progenitor) cell states by minimizing the total distance over the tree edges. This problem is NP-hard;
+  TADLineage solves it exactly with an integer linear program.
+- **(d) Large parsimony.** Infer the differentiation tree itself together with the ancestral hierarchies,
+  also NP-hard and solved exactly with an integer linear program.
+
+**(e)** TADLineage also identifies a largest consistent set of TAD **merge** and **split** events
+between two hierarchies, by reduction to maximum flow.
 
 The repository contains code only. Hi-C data, TAD calls, intermediate results and figures are not
 included.
+
+## Quick start
+
+`tadlineage.py` runs the median, small parsimony and large parsimony on any input. It needs Python with
+`gurobipy` and a Gurobi license (see [Requirements](#requirements)).
+
+**1. Call TADs from the Hi-C of each cell state.** Any caller that writes one TAD per line as
+`start end ...` in 1-based bin indices works. For example, with [OnTAD](https://github.com/anlin00007/OnTAD)
+on a dense contact matrix of one chromosome:
+
+```bash
+OnTAD/OnTAD/src/OnTAD LT/chr19/1mb/hic_matrix.txt -penalty 0.1 -maxsz 200 -o LT/chr19/1mb/tads
+# writes LT/chr19/1mb/tads.tad; repeat for every cell state, same chromosome and bin size
+```
+
+**2a. Small parsimony: the tree is known.** Write the tree as an edge list, one `parent child` per line,
+and give a TAD file for every observed cell state. Every leaf needs one, and the root can have one
+(it is then fixed). Vertices without a TAD file are inferred.
+
+```bash
+cat > tree.txt <<'EOF'
+LT  MPP
+MPP CLP
+MPP CMP
+CMP MK
+CMP G
+EOF
+
+python tadlineage.py small --tree tree.txt \
+    --tads LT=LT/chr19/1mb/tads.tad CLP=CLP/chr19/1mb/tads.tad \
+           MK=MK/chr19/1mb/tads.tad G=G/chr19/1mb/tads.tad \
+    --tolerance 1 --out out_small
+# -> out_small/MPP.tad, out_small/CMP.tad, out_small/summary.json
+```
+
+**2b. Median of a set of hierarchies**, for example cells of one cluster or replicates of one cell type:
+
+```bash
+python tadlineage.py median \
+    --tads MEP/chr19/1mb/tads.tad MKP/chr19/1mb/tads.tad MK/chr19/1mb/tads.tad \
+    --tolerance 1 --out out_median
+# -> out_median/median.tad, out_median/summary.json (distance of every input to the median)
+```
+
+**2c. Large parsimony: the tree is unknown.** Give the observed hierarchies only. TADLineage returns the
+most parsimonious binary tree and the hierarchies of its internal vertices. The root does not change the
+cost; `--outgroup` chooses the leaf whose edge carries it (default: the first one).
+
+```bash
+python tadlineage.py large \
+    --tads LT=LT/chr19/1mb/tads.tad CLP=CLP/chr19/1mb/tads.tad \
+           MK=MK/chr19/1mb/tads.tad G=G/chr19/1mb/tads.tad \
+    --outgroup LT --tolerance 1 --out out_large
+# -> out_large/tree.nwk, e.g. (((G,MK)N5,CLP)N6,LT)root;  plus N5.tad, N6.tad, root.tad, summary.json
+```
+
+**Options shared by all three:**
+
+| Option | Meaning |
+|---|---|
+| `--tolerance N` | Before solving, snap boundaries within `N` bins of each other across the inputs to one position, and drop TADs whose two boundaries both occur in only one input. Recommended 1–2; omit it to use the calls exactly as given. The harmonized inputs are kept in `<out>/harmonized/`. |
+| `--Ct`, `--Cb` | Cost of inserting or deleting one TAD (`Ct`) and one boundary (`Cb`); both default to 1. |
+| `--mode` | `small` and `large` only: `convex` (default) minimizes `Ct·TADs + Cb·boundaries`; `lex_boundary_first` and `lex_tad_first` minimize one term first, then the other. |
+
+Outputs are `.tad` files with one `start<TAB>end` per line, in the same bins as the input. Every
+`summary.json` gives the cost and the number of TAD and boundary changes on each edge. Run one
+chromosome and bin size at a time. On a laptop, chromosome 1 at 250 kb (about 80 TADs per cell state)
+takes under a second for small parsimony and about 5 seconds for large parsimony with four leaves.
+
+The experiment folders below use the same solvers inside their Snakemake pipelines, with the weighted
+variants and the baselines of the paper.
 
 ## Repository layout
 
@@ -23,6 +106,7 @@ included.
 
 | File | Purpose |
 |---|---|
+| `tadlineage.py` | Command-line entry point (`small`, `median`, `large`) on any tree and TAD files; see [Quick start](#quick-start). |
 | `check_lp_constrained.py` | Small parsimony integer linear program: minimizes TAD changes (`Ct`) plus boundary changes (`Cb`) over the tree edges, with laminarity constraints on the internal nodes. Supports a pinned root, restricting candidate TADs, and imputation at observed nodes. |
 | `check_lp_constrained_weighted.py` | The same program with a per-node importance term (used with OnTAD calls). |
 | `check_lp_constrained_weighted_updated.py` | Boundary-aware variant that uses per-TAD and per-boundary scores (used with RobusTAD calls). |
