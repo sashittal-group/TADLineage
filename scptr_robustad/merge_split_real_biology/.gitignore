@@ -1,0 +1,3 @@
+# Downloaded reference data, rebuilt by fetch_reference_data.py. The curated gene sets in
+# gene_sets/ are source and stay tracked.
+reference/

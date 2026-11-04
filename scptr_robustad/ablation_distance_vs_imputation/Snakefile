@@ -1,0 +1,72 @@
+# Ablation: is the embryo clustering ARI from the TAD distance / median, or from the imputation?
+# Run from this folder:
+#   /Users/PSLabMonisha/miniforge3/envs/snakemake-tutorial/bin/snakemake --cores 6 -p --rerun-triggers mtime --scheduler greedy --
+
+PYTHON = "/Users/PSLabMonisha/miniforge3/envs/snakemake-tutorial/bin/python"
+ENV = ("export OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 "
+       "NUMBA_CACHE_DIR=$PWD/cache MPLCONFIGDIR=$PWD/cache/mpl;")
+
+RESOLUTIONS = ["250000", "500000", "1000000"]
+HIERARCHIES = ["raw", "imputed"]
+CHROMS = [f"chr{i}" for i in range(1, 20)] + ["chrX"]
+
+wildcard_constraints:
+    res = "|".join(RESOLUTIONS),
+    hier = "|".join(HIERARCHIES)
+
+
+def raw_trees(wildcards):
+    return [f"hierarchies/{wildcards.res}/raw/trees.npz"] if wildcards.hier == "raw" else []
+
+
+rule all:
+    input:
+        "figures/ablation_genome_wide.png",
+        "figures/ablation_per_chromosome.png"
+
+
+rule build_raw:
+    output: "hierarchies/{res}/raw/trees.npz"
+    log: "logs/build_raw_{res}.log"
+    shell: "{ENV} {PYTHON} build_raw.py --resolution {wildcards.res} > {log} 2>&1"
+
+
+rule cluster_genome:
+    input: raw_trees
+    output: "runs/{res}/all/{hier}/run.json"
+    log: "logs/cluster_{res}_all_{hier}.log"
+    threads: 6
+    shell: "{ENV} {PYTHON} cluster.py --resolution {wildcards.res} --hierarchy {wildcards.hier} "
+           "--scopes all --workers {threads} > {log} 2>&1"
+
+
+rule cluster_chromosomes:
+    input: raw_trees
+    output: expand("runs/{{res}}/{chrom}/{{hier}}/run.json", chrom=CHROMS)
+    log: "logs/cluster_{res}_chromosomes_{hier}.log"
+    threads: 6
+    shell: "{ENV} {PYTHON} cluster.py --resolution {wildcards.res} --hierarchy {wildcards.hier} "
+           "--scopes chromosomes --workers {threads} > {log} 2>&1"
+
+
+rule contact_references:
+    output: "runs/contact_references/labels.npz"
+    log: "logs/contact_references.log"
+    shell: "{ENV} {PYTHON} contact_references.py > {log} 2>&1"
+
+
+rule score:
+    input:
+        expand("runs/{res}/all/{hier}/run.json", res=RESOLUTIONS, hier=HIERARCHIES),
+        expand("runs/{res}/{chrom}/{hier}/run.json", res=RESOLUTIONS, chrom=CHROMS, hier=HIERARCHIES),
+        "runs/contact_references/labels.npz"
+    output: "summary.tsv", "per_start.tsv"
+    log: "logs/score.log"
+    shell: "{ENV} {PYTHON} score.py > {log} 2>&1"
+
+
+rule plot:
+    input: "summary.tsv", "per_start.tsv"
+    output: "figures/ablation_genome_wide.png", "figures/ablation_per_chromosome.png"
+    log: "logs/plot.log"
+    shell: "{ENV} {PYTHON} plot.py > {log} 2>&1"
