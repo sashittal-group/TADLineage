@@ -1,8 +1,5 @@
 # TADLineage: TAD reorganization across cell states
 
-> **Draft README.** Paths, environment names and run instructions reflect the development machine and
-> will be generalized before release.
-
 ![Overview of TADLineage](docs/overview.png)
 
 ## Overview
@@ -215,7 +212,3 @@ must receive identical simulation parameters.
 - **Genome assembly.** `genome.chrom.sizes` holds mm9 chromosome lengths, but the single-cell embryo
   data are mm10. Genome-wide ("all") runs that lay chromosomes end to end with this file misplace
   contacts and TADs near the ends of chromosomes that are longer in mm10.
-
-## Status
-
-Research code accompanying a manuscript in preparation. Interfaces may change.
